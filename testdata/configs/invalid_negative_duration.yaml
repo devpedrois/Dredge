@@ -1,0 +1,8 @@
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+
+policies:
+  containers:
+    - status: "exited"
+      older_than: "-1h"

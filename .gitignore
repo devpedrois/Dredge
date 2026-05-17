@@ -1,0 +1,9 @@
+bin/
+*.exe
+.env
+vendor/
+
+# Exclude all YAML except example config and testdata
+*.yaml
+!config.example.yaml
+!testdata/**/*.yaml

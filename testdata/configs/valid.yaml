@@ -1,0 +1,35 @@
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+
+policies:
+  containers:
+    - status: "exited"
+      older_than: "24h"
+    - status: "created"
+      older_than: "48h"
+    - status: "dead"
+      older_than: "0s"
+  images:
+    dangling: true
+    unused_older_than: "168h"
+  volumes:
+    orphaned: true
+  networks:
+    unused: true
+
+protection:
+  label: "dredge.keep=true"
+  name_patterns:
+    - "postgres*"
+    - "redis*"
+    - "production-*"
+    - "*-db"
+
+watch:
+  interval: "6h"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stderr"

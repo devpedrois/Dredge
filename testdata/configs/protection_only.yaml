@@ -1,0 +1,14 @@
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+
+protection:
+  label: "dredge.keep=true"
+  name_patterns:
+    - "postgres*"
+    - "production-*"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stderr"

@@ -1,0 +1,58 @@
+# config.example.yaml — Configuração do dredge
+# Copiar para ~/.dredge.yaml ou /etc/dredge/config.yaml
+
+# Conexão Docker
+docker:
+  socket: "/var/run/docker.sock"       # Path do socket. Default: unix socket padrão.
+  timeout: "30s"                       # Timeout para operações Docker.
+
+# Políticas de limpeza por tipo de recurso
+policies:
+  containers:
+    # Deletar containers com status "exited" há mais de 24h
+    - status: "exited"
+      older_than: "24h"
+    # Deletar containers com status "created" (nunca iniciados) há mais de 48h
+    - status: "created"
+      older_than: "48h"
+    # Deletar containers "dead" imediatamente
+    - status: "dead"
+      older_than: "0s"
+
+  images:
+    # Deletar imagens dangling (<none>:<none>)
+    dangling: true
+    # Deletar imagens sem tag usável há mais de 7 dias
+    unused_older_than: "168h"
+
+  volumes:
+    # Deletar volumes não associados a nenhum container
+    orphaned: true
+
+  networks:
+    # Deletar networks customizadas não usadas (NUNCA bridge, host, none)
+    unused: true
+    # [SECURITY] Default networks (bridge, host, none) are ALWAYS protected
+
+# Proteção global
+protection:
+  # Label que marca recurso como protegido. Sacrossanto.
+  label: "dredge.keep=true"
+  # Patterns de nomes para NUNCA deletar (glob matching)
+  name_patterns:
+    - "postgres*"
+    - "redis*"
+    - "production-*"
+    - "*-db"
+
+# Watch mode (daemon)
+watch:
+  interval: "6h"                       # Intervalo entre execuções automáticas
+  # Alternativa: expressão cron
+  # cron: "0 */6 * * *"
+
+# Logging
+logging:
+  level: "info"                        # debug, info, warn, error
+  format: "json"                       # json ou text
+  output: "stderr"                     # stderr, stdout, ou path de arquivo
