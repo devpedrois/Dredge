@@ -7,7 +7,11 @@ import (
 	"time"
 
 	"github.com/docker/docker/client"
+	"github.com/user/dredge/internal/collector"
 )
+
+// Compile-time check: *Client must implement collector.DockerClient.
+var _ collector.DockerClient = (*Client)(nil)
 
 // Client wraps the Docker Engine SDK client with timeout and logging.
 // [SECURITY] Docker socket = root access to the host — handle with extreme care.
