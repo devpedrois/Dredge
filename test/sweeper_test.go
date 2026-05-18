@@ -276,6 +276,43 @@ func TestSweepResultCountsCorrect(t *testing.T) {
 	assert.Len(t, result.Failed, 1)
 }
 
+// TestSweepSkipsEmptyIDResource verifies that resources with empty IDs are silently
+// skipped — they indicate a Docker API anomaly and must never trigger deletion.
+// [SECURITY] Empty ID = malformed resource — never attempt deletion.
+func TestSweepSkipsEmptyIDResource(t *testing.T) {
+	mock := newMockDockerSweeper()
+
+	r := &model.Resource{
+		ID: "", Name: "mystery", Type: model.TypeContainer, State: "exited",
+		CreatedAt: time.Now().Add(-48 * time.Hour),
+	}
+	plan := buildPlan(r)
+	sw := sweeper.New(mock, newSweeperLogger(), "dredge.keep=true")
+	result := sw.Execute(context.Background(), plan)
+
+	assert.Empty(t, result.Succeeded)
+	assert.Empty(t, result.Failed, "empty-ID resource must not count as failure")
+	assert.Empty(t, mock.removed)
+}
+
+// TestSweepSkipsEmptyNameVolume verifies that a volume with an empty name is skipped.
+// [SECURITY] Empty volume name = malformed resource — never attempt deletion.
+func TestSweepSkipsEmptyNameVolume(t *testing.T) {
+	mock := newMockDockerSweeper()
+
+	r := &model.Resource{
+		ID: "", Name: "", Type: model.TypeVolume, State: "available",
+		CreatedAt: time.Now().Add(-48 * time.Hour),
+	}
+	plan := buildPlan(r)
+	sw := sweeper.New(mock, newSweeperLogger(), "dredge.keep=true")
+	result := sw.Execute(context.Background(), plan)
+
+	assert.Empty(t, result.Succeeded)
+	assert.Empty(t, result.Failed, "empty-name volume must not count as failure")
+	assert.Empty(t, mock.removed)
+}
+
 // TestSweepVolumesUseNameNotID verifies volumes are deleted by Name, not ID.
 // [SECURITY] Volumes use Name for deletion — must not use ID.
 func TestSweepVolumesUseNameNotID(t *testing.T) {

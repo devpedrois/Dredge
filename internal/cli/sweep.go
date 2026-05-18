@@ -41,7 +41,7 @@ func runSweep(cmd *cobra.Command, _ []string) error {
 	engine := policy.New(appCtx.Config, appCtx.Logger)
 	decisions := engine.Evaluate(inventory)
 
-	p := planner.New(appCtx.Logger)
+	p := planner.New(appCtx.Logger, appCtx.Config.Protection.Label)
 	plan := p.CreatePlan(decisions)
 	plan.Timestamp = time.Now()
 
@@ -66,8 +66,8 @@ func runSweep(cmd *cobra.Command, _ []string) error {
 
 	if !yes {
 		// [SECURITY] Non-interactive sweep without --yes is an error — prevents accidental piped execution.
-		if !term.IsTerminal(os.Stdin.Fd()) {
-			return fmt.Errorf("sweep requires --yes flag for non-interactive execution")
+		if err := CheckSweepConfirmation(yes, term.IsTerminal(os.Stdin.Fd())); err != nil {
+			return err
 		}
 
 		fmt.Fprintf(os.Stdout, "\nAbout to delete %d resources (%s). Continue? [y/N]: ",

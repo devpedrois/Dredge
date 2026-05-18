@@ -51,6 +51,20 @@ func (s *Sweeper) Execute(ctx context.Context, plan *model.ExecutionPlan) *model
 	for _, deletion := range plan.Deletions {
 		r := deletion.Resource
 
+		// [SECURITY] Empty ID/name is a Docker API anomaly — skip rather than risk a wrong deletion.
+		switch r.Type {
+		case model.TypeVolume:
+			if r.Name == "" {
+				s.logger.Warn("[SECURITY] volume resource has empty name — skipping", "type", r.Type)
+				continue
+			}
+		default:
+			if r.ID == "" {
+				s.logger.Warn("[SECURITY] resource has empty ID — skipping", "type", r.Type, "name", r.Name)
+				continue
+			}
+		}
+
 		// [SECURITY] Re-verify resource state before each deletion — TOCTOU defense.
 		// Docker state can change between when the plan was built and now.
 		exists, currentState := s.verifyResource(ctx, r)

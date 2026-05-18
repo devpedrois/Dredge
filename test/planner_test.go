@@ -38,7 +38,7 @@ func TestPlannerOrdersContainersBeforeImages(t *testing.T) {
 		makeDecision(model.TypeContainer, model.ActionDelete, now, 50),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Len(t, plan.Deletions, 2)
@@ -53,7 +53,7 @@ func TestPlannerOrdersImagesBeforeVolumes(t *testing.T) {
 		makeDecision(model.TypeImage, model.ActionDelete, now, 100),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Len(t, plan.Deletions, 2)
@@ -68,7 +68,7 @@ func TestPlannerOrdersVolumesBeforeNetworks(t *testing.T) {
 		makeDecision(model.TypeVolume, model.ActionDelete, now, 300),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Len(t, plan.Deletions, 2)
@@ -84,7 +84,7 @@ func TestPlannerCalculatesTotalSize(t *testing.T) {
 		makeDecisionNamed(model.TypeVolume, "v1", model.ActionDelete, now, 300),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Equal(t, int64(600), plan.TotalSize)
@@ -100,7 +100,7 @@ func TestPlannerCountsProtectedResources(t *testing.T) {
 		makeDecisionNamed(model.TypeVolume, "v2", model.ActionKeep, now, 0),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Equal(t, 3, plan.ProtectedCount)
@@ -108,7 +108,7 @@ func TestPlannerCountsProtectedResources(t *testing.T) {
 }
 
 func TestPlannerEmptyDecisionsProduceEmptyPlan(t *testing.T) {
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan([]model.Decision{})
 
 	assert.Empty(t, plan.Deletions)
@@ -125,7 +125,7 @@ func TestPlannerNumbersDeletionsSequentially(t *testing.T) {
 		makeDecisionNamed(model.TypeVolume, "v1", model.ActionDelete, now, 10),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Len(t, plan.Deletions, 4)
@@ -145,7 +145,7 @@ func TestPlannerWithinTypeSortsByCreatedAt(t *testing.T) {
 		makeDecisionNamed(model.TypeContainer, "middle", model.ActionDelete, middle, 10),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Len(t, plan.Deletions, 3)
@@ -163,7 +163,7 @@ func TestPlannerFullOrderContainersImagesVolumesNetworks(t *testing.T) {
 		makeDecision(model.TypeContainer, model.ActionDelete, now, 50),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	expectedOrder := []model.ResourceType{
@@ -184,9 +184,28 @@ func TestPlannerOnlyDeleteDecisionsIncluded(t *testing.T) {
 		makeDecisionNamed(model.TypeImage, "delete-me", model.ActionDelete, now, 200),
 	}
 
-	p := planner.New(nil)
+	p := planner.New(nil, "")
 	plan := p.CreatePlan(decisions)
 
 	assert.Len(t, plan.Deletions, 1)
 	assert.Equal(t, "delete-me", plan.Deletions[0].Resource.Name)
+}
+
+// TestPlannerSkipsProtectedLabelResource verifies the planner's 3rd-layer label check:
+// a resource with the protection label must never reach the execution plan,
+// even if the policy engine mistakenly marked it ActionDelete.
+// [SECURITY] 3rd layer: planner rejects protected resource that policy engine missed.
+func TestPlannerSkipsProtectedLabelResource(t *testing.T) {
+	now := time.Now()
+	protected := &model.Resource{
+		ID: "protected-id", Name: "my-app", Type: model.TypeContainer,
+		CreatedAt: now, Labels: map[string]string{"dredge.keep": "true"},
+	}
+	forged := model.Decision{Resource: protected, Action: model.ActionDelete, Reason: "forged by attacker"}
+
+	p := planner.New(nil, "dredge.keep=true")
+	plan := p.CreatePlan([]model.Decision{forged})
+
+	assert.Empty(t, plan.Deletions, "planner must not include protected-label resource")
+	assert.Equal(t, 1, plan.ProtectedCount)
 }

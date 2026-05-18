@@ -3,6 +3,7 @@ package planner
 import (
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/user/dredge/internal/model"
@@ -20,12 +21,16 @@ var typeOrder = map[model.ResourceType]int{
 
 // Planner converts a slice of Decisions into an ordered ExecutionPlan.
 type Planner struct {
-	logger *slog.Logger
+	logger          *slog.Logger
+	protectionLabel string // "key=value" — defense-in-depth, checked after policy engine
 }
 
-// New constructs a Planner. logger may be nil (no-op).
-func New(logger *slog.Logger) *Planner {
-	return &Planner{logger: logger}
+// New constructs a Planner.
+// protectionLabel is "key=value" from config.Protection.Label.
+// Providing it enables a third independent label-protection check inside CreatePlan.
+// [SECURITY] 3rd layer — label protection checked at policy engine, planner, AND sweeper.
+func New(logger *slog.Logger, protectionLabel string) *Planner {
+	return &Planner{logger: logger, protectionLabel: protectionLabel}
 }
 
 // CreatePlan filters Delete decisions, sorts them in the mandatory deletion order,
@@ -37,6 +42,15 @@ func (p *Planner) CreatePlan(decisions []model.Decision) *model.ExecutionPlan {
 
 	for _, d := range decisions {
 		if d.Action == model.ActionDelete {
+			// [SECURITY] 3rd-layer label check — defense-in-depth against policy engine bugs.
+			if p.hasProtectionLabel(d.Resource) {
+				if p.logger != nil {
+					p.logger.Error("[SECURITY] protected resource reached planner — BUG in policy engine, skipping",
+						"id", d.Resource.ID, "type", d.Resource.Type, "name", d.Resource.Name)
+				}
+				protectedCount++
+				continue
+			}
 			deletions = append(deletions, d)
 		} else {
 			protectedCount++
@@ -71,4 +85,18 @@ func (p *Planner) CreatePlan(decisions []model.Decision) *model.ExecutionPlan {
 		ProtectedCount: protectedCount,
 		Timestamp:      time.Now(),
 	}
+}
+
+// hasProtectionLabel returns true when r carries the configured protection label.
+// [SECURITY] 3rd-layer defense — label checked independently of policy engine and sweeper.
+func (p *Planner) hasProtectionLabel(r *model.Resource) bool {
+	if p.protectionLabel == "" || len(r.Labels) == 0 {
+		return false
+	}
+	parts := strings.SplitN(p.protectionLabel, "=", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	v, ok := r.Labels[parts[0]]
+	return ok && v == parts[1]
 }

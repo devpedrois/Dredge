@@ -34,7 +34,7 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 	engine := policy.New(appCtx.Config, appCtx.Logger)
 	decisions := engine.Evaluate(inventory)
 
-	p := planner.New(appCtx.Logger)
+	p := planner.New(appCtx.Logger, appCtx.Config.Protection.Label)
 	plan := p.CreatePlan(decisions)
 
 	plan.Timestamp = time.Now()
