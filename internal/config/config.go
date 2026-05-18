@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -192,6 +193,14 @@ func (c *Config) Validate() error {
 			"invalid protection label format: %q — must be in key=value format",
 			c.Protection.Label,
 		)
+	}
+
+	// [SECURITY] Validate name protection patterns at load time — an invalid pattern
+	// is silently skipped by filepath.Match, leaving protected resources unguarded.
+	for i, pattern := range c.Protection.NamePatterns {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return fmt.Errorf("invalid protection name_pattern at index %d: %q — %w", i, pattern, err)
+		}
 	}
 
 	return nil

@@ -8,6 +8,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/errdefs"
 	"github.com/user/dredge/internal/model"
 )
@@ -46,15 +47,42 @@ func normalizeContainer(ctr dockertypes.Container) model.Resource {
 		id = ctr.ID[:12]
 	}
 
+	// Collect named volume mounts so ResolveReferences can build volume dependency graph.
+	// [SECURITY] Named volume mounts are tracked to prevent orphan-deletion of mounted volumes.
+	var mountedVolumes []string
+	for _, m := range ctr.Mounts {
+		if m.Type == mount.TypeVolume && m.Name != "" {
+			mountedVolumes = append(mountedVolumes, m.Name)
+		}
+	}
+
+	// Collect connected network IDs (short form) so ResolveReferences can build network graph.
+	// [SECURITY] Network connections tracked to prevent unused-deletion of connected networks.
+	var connectedNetworkIDs []string
+	if ctr.NetworkSettings != nil {
+		for _, endpoint := range ctr.NetworkSettings.Networks {
+			if endpoint == nil || endpoint.NetworkID == "" {
+				continue
+			}
+			netID := endpoint.NetworkID
+			if len(netID) > 12 {
+				netID = netID[:12]
+			}
+			connectedNetworkIDs = append(connectedNetworkIDs, netID)
+		}
+	}
+
 	return model.Resource{
-		ID:        id,
-		Name:      name,
-		Type:      model.TypeContainer,
-		State:     ctr.State,
-		CreatedAt: time.Unix(ctr.Created, 0),
-		Size:      ctr.SizeRw + ctr.SizeRootFs,
-		Labels:    ctr.Labels,
-		ImageID:   ctr.ImageID,
+		ID:                  id,
+		Name:                name,
+		Type:                model.TypeContainer,
+		State:               ctr.State,
+		CreatedAt:           time.Unix(ctr.Created, 0),
+		Size:                ctr.SizeRw + ctr.SizeRootFs,
+		Labels:              ctr.Labels,
+		ImageID:             ctr.ImageID,
+		MountedVolumes:      mountedVolumes,
+		ConnectedNetworkIDs: connectedNetworkIDs,
 	}
 }
 

@@ -32,12 +32,19 @@ type Resource struct {
 	Labels map[string]string
 	// ImageID is the image the container runs. Set only for containers.
 	ImageID string
-	// References holds IDs of containers that reference this image. Set only for images.
+	// References holds IDs of containers that reference this resource.
+	// Set for images (containers using them) and volumes/networks (containers mounting/connecting).
 	// [SECURITY] Populated by ResolveReferences — foundation of the dependency graph.
 	References []string
 	// IsDefault marks the built-in Docker networks (bridge, host, none).
 	// [SECURITY] Default networks are infrastructure — never deleted.
 	IsDefault bool
+	// MountedVolumes holds the names of named volumes this container mounts.
+	// Set only for TypeContainer resources; used by ResolveReferences to populate volume References.
+	MountedVolumes []string
+	// ConnectedNetworkIDs holds the short (12-char) IDs of networks this container is connected to.
+	// Set only for TypeContainer resources; used by ResolveReferences to populate network References.
+	ConnectedNetworkIDs []string
 }
 
 // Action is the policy engine verdict for a resource.

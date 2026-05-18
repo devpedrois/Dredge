@@ -404,3 +404,242 @@ func TestAdversarial_EmptyConfigDeletesNothing(t *testing.T) {
 		"all 10 resources must be in ProtectedCount when no deletion rules exist")
 	assert.Equal(t, int64(0), plan.TotalSize)
 }
+
+// ─── Test 11 ─────────────────────────────────────────────────────────────────
+
+// TestAdversarial_ImageIDWithSHA256PrefixResolvedCorrectly verifies that the
+// dependency graph correctly protects an image when the container's ImageID
+// carries the "sha256:" prefix (as returned by Docker's ContainerList API).
+// Without normalization the lookup misses and the image appears unreferenced.
+// [SECURITY] Adversarial: sha256: prefix in ImageID must not break dependency graph.
+func TestAdversarial_ImageIDWithSHA256PrefixResolvedCorrectly(t *testing.T) {
+	cfg := aggressiveConfig()
+	engine := policy.New(cfg, adversarialLogger())
+
+	// Simulate Docker's ContainerList format: ImageID has "sha256:" prefix + full 64-char hex.
+	fullImageID := "sha256:abc123def456789012345678901234567890123456789012345678901234abcd"
+	shortImageID := "abc123def456" // what normalizeImage() produces
+
+	// Container is label-protected (kept) so the image dependency graph fires.
+	// An exited+unprotected container would also be deleted, removing the image protection.
+	ctr := model.Resource{
+		ID:        "ctr-img-ref",
+		Name:      "app",
+		Type:      model.TypeContainer,
+		State:     "exited",
+		ImageID:   fullImageID,
+		Labels:    map[string]string{"dredge.keep": "true"},
+		CreatedAt: time.Now().Add(-48 * time.Hour),
+	}
+	image := model.Resource{
+		ID:        shortImageID,
+		Name:      "myapp:latest",
+		Type:      model.TypeImage,
+		State:     "dangling",
+		CreatedAt: time.Now().Add(-200 * time.Hour),
+		Labels:    map[string]string{},
+	}
+
+	// ResolveReferences is the layer that resolves image→container via ImageID.
+	// Without sha256: normalization this lookup always misses — graph broken.
+	inv := &collector.Inventory{
+		Containers: []model.Resource{ctr},
+		Images:     []model.Resource{image},
+	}
+	inv.ResolveReferences()
+
+	require.Len(t, inv.Images[0].References, 1,
+		"ResolveReferences must link the container to the image despite sha256: prefix")
+
+	decisions := engine.Evaluate(inv)
+
+	imgDecision := findDecision(decisions, shortImageID)
+	require.NotNil(t, imgDecision, "decision for image must exist")
+	assert.Equal(t, model.ActionKeep, imgDecision.Action,
+		"image referenced by kept container must be protected — sha256: prefix must be normalized")
+	assert.Contains(t, imgDecision.Reason, "referenced by kept container",
+		"reason must reflect dependency graph protection, not another rule")
+}
+
+// ─── Test 12 ─────────────────────────────────────────────────────────────────
+
+// TestAdversarial_VolumeMountedByContainerNotOrphaned verifies that a volume
+// mounted by a container (via MountedVolumes) is NOT classified as orphaned,
+// even with an aggressive config that enables orphan deletion.
+// [SECURITY] Adversarial: volume reference resolution must prevent orphan misclassification.
+func TestAdversarial_VolumeMountedByContainerNotOrphaned(t *testing.T) {
+	cfg := aggressiveConfig()
+	engine := policy.New(cfg, adversarialLogger())
+
+	ctr := model.Resource{
+		ID:             "ctr-with-vol",
+		Name:           "app",
+		Type:           model.TypeContainer,
+		State:          "exited",
+		MountedVolumes: []string{"my-data"},
+		Labels:         map[string]string{},
+		CreatedAt:      time.Now().Add(-48 * time.Hour),
+	}
+	vol := model.Resource{
+		ID:        "my-data",
+		Name:      "my-data",
+		Type:      model.TypeVolume,
+		CreatedAt: time.Now().Add(-200 * time.Hour),
+		Labels:    map[string]string{},
+	}
+
+	inv := &collector.Inventory{
+		Containers: []model.Resource{ctr},
+		Volumes:    []model.Resource{vol},
+	}
+	inv.ResolveReferences()
+
+	require.Len(t, inv.Volumes[0].References, 1,
+		"volume must have 1 reference after ResolveReferences")
+
+	decisions := engine.Evaluate(inv)
+
+	volDecision := findDecision(decisions, "my-data")
+	require.NotNil(t, volDecision)
+	assert.Equal(t, model.ActionKeep, volDecision.Action,
+		"volume mounted by a container must NOT be classified as orphaned")
+}
+
+// ─── Test 13 ─────────────────────────────────────────────────────────────────
+
+// TestAdversarial_NetworkConnectedToContainerNotUnused verifies that a custom
+// network connected to a container is NOT classified as unused, even with an
+// aggressive config that enables unused-network deletion.
+// [SECURITY] Adversarial: network reference resolution must prevent unused misclassification.
+func TestAdversarial_NetworkConnectedToContainerNotUnused(t *testing.T) {
+	cfg := aggressiveConfig()
+	engine := policy.New(cfg, adversarialLogger())
+
+	ctr := model.Resource{
+		ID:                  "ctr-with-net",
+		Name:                "app",
+		Type:                model.TypeContainer,
+		State:               "exited",
+		ConnectedNetworkIDs: []string{"aabbccddeeff"},
+		Labels:              map[string]string{},
+		CreatedAt:           time.Now().Add(-48 * time.Hour),
+	}
+	net := model.Resource{
+		ID:        "aabbccddeeff",
+		Name:      "my-app-network",
+		Type:      model.TypeNetwork,
+		IsDefault: false,
+		CreatedAt: time.Now().Add(-200 * time.Hour),
+		Labels:    map[string]string{},
+	}
+
+	inv := &collector.Inventory{
+		Containers: []model.Resource{ctr},
+		Networks:   []model.Resource{net},
+	}
+	inv.ResolveReferences()
+
+	require.Len(t, inv.Networks[0].References, 1,
+		"network must have 1 reference after ResolveReferences")
+
+	decisions := engine.Evaluate(inv)
+
+	netDecision := findDecision(decisions, "aabbccddeeff")
+	require.NotNil(t, netDecision)
+	assert.Equal(t, model.ActionKeep, netDecision.Action,
+		"network connected to a container must NOT be classified as unused")
+}
+
+// ─── Test 14 ─────────────────────────────────────────────────────────────────
+
+// TestAdversarial_InvalidGlobPatternRejectedAtConfigLoad verifies that a config
+// with a syntactically invalid glob pattern in protection.name_patterns is
+// rejected at load time, preventing silent bypass of name-pattern protection.
+// [SECURITY] Adversarial: invalid glob = silent skip = unprotected resources.
+func TestAdversarial_InvalidGlobPatternRejectedAtConfigLoad(t *testing.T) {
+	_, err := loadInlineConfig(`
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+protection:
+  label: "dredge.keep=true"
+  name_patterns:
+    - "postgres*"
+    - "[invalid-bracket"
+`)
+	require.Error(t, err, "config with invalid glob pattern must be rejected at load time")
+	assert.Contains(t, err.Error(), "invalid protection name_pattern",
+		"error must identify the bad name_pattern")
+}
+
+// ─── Test 15 ─────────────────────────────────────────────────────────────────
+
+// TestAdversarial_MultipleContainersOneImageProtectedUntilAllDeleted verifies
+// that an image is kept when at least one referencing container is kept, even
+// if other referencing containers are marked for deletion.
+// [SECURITY] Adversarial: image must survive as long as ANY kept container references it.
+func TestAdversarial_MultipleContainersOneImageProtectedUntilAllDeleted(t *testing.T) {
+	cfg := aggressiveConfig()
+	engine := policy.New(cfg, adversarialLogger())
+
+	imgID := "img-shared"
+
+	// ctr1: exited 48h → matches deletion rule → will be deleted.
+	ctr1 := model.Resource{
+		ID:        "ctr-delete",
+		Name:      "app-old",
+		Type:      model.TypeContainer,
+		State:     "exited",
+		ImageID:   imgID,
+		Labels:    map[string]string{},
+		CreatedAt: time.Now().Add(-48 * time.Hour),
+	}
+	// ctr2: label-protected → will be kept → image must survive.
+	ctr2 := model.Resource{
+		ID:        "ctr-keep",
+		Name:      "app-protected",
+		Type:      model.TypeContainer,
+		State:     "exited",
+		ImageID:   imgID,
+		Labels:    map[string]string{"dredge.keep": "true"},
+		CreatedAt: time.Now().Add(-48 * time.Hour),
+	}
+	// Image is dangling so it would be eligible for deletion.
+	// References start empty — ResolveReferences populates them.
+	image := model.Resource{
+		ID:        imgID,
+		Name:      "<none>:<none>",
+		Type:      model.TypeImage,
+		State:     "dangling",
+		Labels:    map[string]string{},
+		CreatedAt: time.Now().Add(-200 * time.Hour),
+	}
+
+	inv := &collector.Inventory{
+		Containers: []model.Resource{ctr1, ctr2},
+		Images:     []model.Resource{image},
+	}
+	// ResolveReferences links containers to image via ImageID.
+	// This must populate image.References = ["ctr-delete", "ctr-keep"].
+	inv.ResolveReferences()
+	require.Len(t, inv.Images[0].References, 2,
+		"both containers must be linked to the image via ImageID")
+
+	decisions := engine.Evaluate(inv)
+
+	imgDecision := findDecision(decisions, imgID)
+	require.NotNil(t, imgDecision)
+	assert.Equal(t, model.ActionKeep, imgDecision.Action,
+		"image must be kept when ANY referencing container is kept")
+	assert.Contains(t, imgDecision.Reason, "referenced by kept container")
+
+	ctr1Decision := findDecision(decisions, "ctr-delete")
+	require.NotNil(t, ctr1Decision)
+	assert.Equal(t, model.ActionDelete, ctr1Decision.Action,
+		"unlabelled exited container must still be marked for deletion")
+
+	ctr2Decision := findDecision(decisions, "ctr-keep")
+	require.NotNil(t, ctr2Decision)
+	assert.Equal(t, model.ActionKeep, ctr2Decision.Action,
+		"label-protected container must be kept")
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/user/dredge/internal/model"
@@ -89,19 +90,55 @@ func newCollectError(resourceType string, err error) error {
 	return fmt.Errorf("listing %s: %w", resourceType, err)
 }
 
-// ResolveReferences populates Resource.References for each image by scanning
-// all containers and recording which image ID they use.
+// ResolveReferences populates Resource.References for images, volumes, and networks
+// by scanning all containers and recording which resources they use.
 // [SECURITY] Reference resolution is the foundation of the dependency graph.
-// An image with live references must never be deleted.
+// Images/volumes/networks with live references must never be deleted.
 func (inv *Inventory) ResolveReferences() {
+	// Image graph: image short-ID → resource pointer.
+	// [SECURITY] ImageID from ContainerList is "sha256:<hex64>" — must be normalized to
+	// match the 12-char short IDs stored in image Resources by normalizeImage().
+	// Without this normalization, the lookup always misses and ALL images appear unreferenced.
 	imageByID := make(map[string]*model.Resource, len(inv.Images))
 	for i := range inv.Images {
 		imageByID[inv.Images[i].ID] = &inv.Images[i]
 	}
 
+	// Volume graph: volume name → resource pointer.
+	volumeByName := make(map[string]*model.Resource, len(inv.Volumes))
+	for i := range inv.Volumes {
+		volumeByName[inv.Volumes[i].Name] = &inv.Volumes[i]
+	}
+
+	// Network graph: network short-ID → resource pointer.
+	networkByID := make(map[string]*model.Resource, len(inv.Networks))
+	for i := range inv.Networks {
+		networkByID[inv.Networks[i].ID] = &inv.Networks[i]
+	}
+
 	for _, ctr := range inv.Containers {
-		if img, ok := imageByID[ctr.ImageID]; ok {
+		// Image reference: normalize sha256: prefix + truncate to 12 chars.
+		// [SECURITY] Without normalization the lookup always misses, breaking image dependency graph.
+		imgID := strings.TrimPrefix(ctr.ImageID, "sha256:")
+		if len(imgID) > 12 {
+			imgID = imgID[:12]
+		}
+		if img, ok := imageByID[imgID]; ok {
 			img.References = append(img.References, ctr.ID)
+		}
+
+		// Volume references: named volumes mounted by this container.
+		for _, volName := range ctr.MountedVolumes {
+			if vol, ok := volumeByName[volName]; ok {
+				vol.References = append(vol.References, ctr.ID)
+			}
+		}
+
+		// Network references: networks this container is connected to.
+		for _, netID := range ctr.ConnectedNetworkIDs {
+			if net, ok := networkByID[netID]; ok {
+				net.References = append(net.References, ctr.ID)
+			}
 		}
 	}
 }

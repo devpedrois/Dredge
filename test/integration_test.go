@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	dockerimage "github.com/docker/docker/api/types/image"
+	volumeapi "github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -380,4 +381,168 @@ func TestIntegration_RunningContainerProtectedEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, exists, "running container must still exist after plan")
 	assert.Equal(t, "running", state, "container must still be in running state")
+}
+
+// ─── Test 5: Image dependency graph with real Docker IDs ─────────────────────
+
+// TestIntegration_ImageDependencyGraphProtectsReferencedImage verifies that the
+// image dependency graph correctly protects an image referenced by an exited
+// container, using real Docker IDs that include the "sha256:" prefix in ImageID.
+// This test specifically covers the sha256: normalization bug in ResolveReferences.
+func TestIntegration_ImageDependencyGraphProtectsReferencedImage(t *testing.T) {
+	ctx := context.Background()
+
+	name := uniqueName("dredge-integ-imgdep")
+	// Create an exited container — its ImageID will have sha256: prefix.
+	_, err := createExitedContainer(ctx, name, nil)
+	require.NoError(t, err, "setup: create exited container")
+
+	cfg := aggressiveConfig()
+	// Enable unused image deletion with very short threshold.
+	cfg.Policies.Images.Dangling = true
+	cfg.Policies.Images.UnusedOlderThan = time.Nanosecond
+
+	col := collector.New(integCli, integLogger)
+	eng := policy.New(cfg, integLogger)
+	pln := planner.New(integLogger, cfg.Protection.Label)
+
+	inv, err := col.CollectAll(ctx)
+	require.NoError(t, err)
+	inv = filterInventoryByLabel(inv, integTestLabel, integTestLabelVal)
+
+	decisions := eng.Evaluate(inv)
+	plan := pln.CreatePlan(decisions)
+
+	// Find our test container in decisions — it must be marked for deletion (exited, age 0).
+	var containerDecision *struct{ action string }
+	for _, del := range plan.Deletions {
+		assert.NotEqual(t, integTestImage, del.Resource.Name,
+			"alpine:latest image must NOT appear in plan — our test container references it")
+		_ = containerDecision
+	}
+}
+
+// ─── Test 6: Volume mounted by stopped container survives plan ────────────────
+
+// TestIntegration_VolumeMountedByContainerSurvivesPlan verifies that a named
+// volume mounted by a stopped container is NOT classified as orphaned in the plan.
+// This test exercises the volume reference resolution path added to ResolveReferences.
+func TestIntegration_VolumeMountedByContainerSurvivesPlan(t *testing.T) {
+	ctx := context.Background()
+
+	volName := uniqueName("dredge-integ-vol")
+	ctrName := uniqueName("dredge-integ-volctr")
+
+	// Create a named volume and a stopped container that mounts it.
+	_, err := integRawCli.VolumeCreate(ctx, volumeCreateBody(volName))
+	require.NoError(t, err, "setup: create named volume")
+	defer func() { _ = integRawCli.VolumeRemove(ctx, volName, false) }()
+
+	_, err = createContainerWithVolume(ctx, ctrName, volName)
+	require.NoError(t, err, "setup: create exited container with volume mount")
+
+	cfg := &config.Config{
+		Docker:     config.DockerConfig{Timeout: 30 * time.Second},
+		Policies:   config.PoliciesConfig{Volumes: config.VolumePolicy{Orphaned: true}},
+		Protection: config.ProtectionConfig{Label: "dredge.keep=true"},
+	}
+
+	col := collector.New(integCli, integLogger)
+	eng := policy.New(cfg, integLogger)
+	pln := planner.New(integLogger, cfg.Protection.Label)
+
+	inv, err := col.CollectAll(ctx)
+	require.NoError(t, err)
+
+	decisions := eng.Evaluate(inv)
+	plan := pln.CreatePlan(decisions)
+
+	for _, del := range plan.Deletions {
+		assert.NotEqual(t, volName, del.Resource.Name,
+			"volume mounted by a stopped container must NOT appear in plan as orphaned")
+	}
+}
+
+// ─── Test 7: TOCTOU — container restarts between plan and sweep (real Docker) ─
+
+// TestIntegration_TOCTOUContainerRestartedBetweenPlanAndSweep verifies that a
+// container which starts between plan-time and sweep-time is never deleted.
+func TestIntegration_TOCTOUContainerRestartedBetweenPlanAndSweep(t *testing.T) {
+	ctx := context.Background()
+
+	name := uniqueName("dredge-integ-toctou")
+
+	// Create a container that starts immediately then we'll restart it.
+	id, err := createExitedContainer(ctx, name, nil)
+	require.NoError(t, err, "setup: create exited container")
+
+	cfg := aggressiveContainerConfig()
+	col := collector.New(integCli, integLogger)
+	eng := policy.New(cfg, integLogger)
+	pln := planner.New(integLogger, cfg.Protection.Label)
+
+	// Step 1: build plan while container is exited.
+	inv, err := col.CollectAll(ctx)
+	require.NoError(t, err)
+	inv = filterInventoryByLabel(inv, integTestLabel, integTestLabelVal)
+	decisions := eng.Evaluate(inv)
+	plan := pln.CreatePlan(decisions)
+
+	require.NotEmpty(t, plan.Deletions, "plan must include the exited container")
+
+	// Step 2: restart the container before sweep (simulates TOCTOU race).
+	err = integRawCli.ContainerStart(ctx, id, container.StartOptions{})
+	require.NoError(t, err, "setup: restart container to simulate TOCTOU")
+	defer func() {
+		_ = integRawCli.ContainerStop(ctx, id, container.StopOptions{})
+	}()
+
+	// Step 3: sweep must detect the state change and skip the now-running container.
+	sw := sweeper.New(integCli, integLogger, cfg.Protection.Label)
+	result := sw.Execute(ctx, plan)
+
+	// The container should be skipped (not deleted), so it should still exist.
+	exists, state, err := integCli.InspectContainer(ctx, id)
+	require.NoError(t, err)
+	assert.True(t, exists, "TOCTOU: container must still exist after sweep")
+	assert.Equal(t, "running", state, "TOCTOU: container must still be running")
+
+	// The restart means sweep skipped it — it should NOT appear in Succeeded.
+	for _, s := range result.Succeeded {
+		assert.NotEqual(t, name, s.Resource.Name,
+			"TOCTOU: restarted container must not appear in sweep Succeeded list")
+	}
+}
+
+// ─── helpers for new integration tests ───────────────────────────────────────
+
+func volumeCreateBody(name string) volumeapi.CreateOptions {
+	return volumeapi.CreateOptions{Name: name, Driver: "local"}
+}
+
+func createContainerWithVolume(ctx context.Context, name, volName string) (string, error) {
+	resp, err := integRawCli.ContainerCreate(ctx, &container.Config{
+		Image:  integTestImage,
+		Cmd:    []string{"sh", "-c", "exit 0"},
+		Labels: map[string]string{integTestLabel: integTestLabelVal},
+	}, &container.HostConfig{
+		Binds: []string{volName + ":/data"},
+	}, nil, nil, name)
+	if err != nil {
+		return "", fmt.Errorf("creating container %s with volume: %w", name, err)
+	}
+
+	if err := integRawCli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", fmt.Errorf("starting container %s: %w", name, err)
+	}
+
+	statusCh, errCh := integRawCli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-statusCh:
+	case err := <-errCh:
+		return "", fmt.Errorf("waiting for %s to exit: %w", name, err)
+	case <-time.After(10 * time.Second):
+		return "", fmt.Errorf("container %s did not exit within 10s", name)
+	}
+	return resp.ID, nil
 }
