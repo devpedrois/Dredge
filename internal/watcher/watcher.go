@@ -42,11 +42,19 @@ func New(cycleFn CycleFunc, interval time.Duration, logger *slog.Logger) *Watche
 
 // Run starts the watch loop: executes one cycle immediately, then repeats every
 // interval. Returns nil on signal receipt, ctx.Err() when the context is done.
-// On shutdown, waits for any in-progress cycle to complete before returning.
+// On shutdown, cancels the running cycle's context so Docker operations abort
+// promptly, then waits for the goroutine to exit.
 func (w *Watcher) Run(ctx context.Context, sigChan <-chan os.Signal) error {
+	// [SECURITY] cycleCtx is the cancellable context passed to each cycle.
+	// On SIGTERM/SIGINT the watcher cancels it, propagating cancellation to all
+	// in-progress Docker API calls so graceful shutdown completes quickly even
+	// when Docker.Timeout is configured to a large value (e.g. 10m).
+	cycleCtx, cycleCancel := context.WithCancel(ctx)
+	defer cycleCancel()
+
 	w.logger.Info("starting dredge watch daemon", "interval", w.interval)
 
-	w.launchCycle(ctx)
+	w.launchCycle(cycleCtx)
 
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
@@ -54,13 +62,15 @@ func (w *Watcher) Run(ctx context.Context, sigChan <-chan os.Signal) error {
 	for {
 		select {
 		case <-ticker.C:
-			w.launchCycle(ctx)
+			w.launchCycle(cycleCtx)
 		case sig := <-sigChan:
 			w.logger.Info("received signal, shutting down gracefully", "signal", sig)
+			cycleCancel()
 			w.wg.Wait()
 			return nil
 		case <-ctx.Done():
 			w.logger.Info("context cancelled, stopping watch daemon")
+			cycleCancel()
 			w.wg.Wait()
 			return ctx.Err()
 		}

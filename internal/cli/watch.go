@@ -42,11 +42,14 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 // Extracted so it can be replaced in tests without a live Docker daemon.
 func buildCycleFn() watcher.CycleFunc {
 	return func(ctx context.Context) watcher.CycleResult {
-		cCtx, cancel := context.WithTimeout(ctx, appCtx.Config.Docker.Timeout)
-		defer cancel()
+		// [SECURITY] Separate contexts: collectCtx bounds Docker list operations;
+		// ctx (from the watcher loop) governs sweep execution so that signal-triggered
+		// context cancellation aborts in-progress deletions quickly on graceful shutdown.
+		collectCtx, collectCancel := context.WithTimeout(ctx, appCtx.Config.Docker.Timeout)
+		defer collectCancel()
 
 		coll := collector.New(appCtx.Docker, appCtx.Logger)
-		inventory, err := coll.CollectAll(cCtx)
+		inventory, err := coll.CollectAll(collectCtx)
 		if err != nil {
 			appCtx.Logger.Error("cycle: failed to collect resources", "error", err)
 			return watcher.CycleResult{}
@@ -64,7 +67,7 @@ func buildCycleFn() watcher.CycleFunc {
 		}
 
 		sw := sweeper.New(appCtx.Docker, appCtx.Logger, appCtx.Config.Protection.Label)
-		result := sw.Execute(cCtx, plan)
+		result := sw.Execute(ctx, plan)
 
 		var recovered int64
 		for _, d := range result.Succeeded {

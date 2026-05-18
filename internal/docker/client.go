@@ -8,10 +8,12 @@ import (
 
 	"github.com/docker/docker/client"
 	"github.com/user/dredge/internal/collector"
+	"github.com/user/dredge/internal/sweeper"
 )
 
-// Compile-time check: *Client must implement collector.DockerClient.
+// Compile-time checks: *Client must implement all consumer interfaces.
 var _ collector.DockerClient = (*Client)(nil)
+var _ sweeper.DockerClient = (*Client)(nil)
 
 // Client wraps the Docker Engine SDK client with timeout and logging.
 // [SECURITY] Docker socket = root access to the host — handle with extreme care.

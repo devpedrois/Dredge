@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	dockertypes "github.com/docker/docker/api/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +38,42 @@ func TestNewClient_SocketTimeout(t *testing.T) {
 
 	_, err = NewClient(f.Name(), 1*time.Second, testLogger())
 	require.Error(t, err, "expected error connecting to a fake socket")
+}
+
+// TestNormalizeContainerPreservesFullID verifies that the full Docker container ID
+// is stored in Resource.ID (not truncated to 12 chars). Truncated IDs can be
+// ambiguous when two containers share the same first 12 characters.
+// [SECURITY] Full ID required for unambiguous deletion via Docker API.
+func TestNormalizeContainerPreservesFullID(t *testing.T) {
+	fullID := "abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+	ctr := dockertypes.Container{
+		ID:      fullID,
+		Names:   []string{"/my-app"},
+		State:   "exited",
+		Created: 0,
+	}
+
+	r := normalizeContainer(ctr)
+	assert.Equal(t, fullID, r.ID,
+		"Resource.ID must hold the full Docker ID, not a 12-char truncation")
+	assert.Equal(t, "my-app", r.Name,
+		"Name must still be the human-readable container name")
+}
+
+// TestNormalizeContainerNameFallsBackToShortID verifies that when a container has
+// no name, the short 12-char ID is used as the display name (not the full ID).
+func TestNormalizeContainerNameFallsBackToShortID(t *testing.T) {
+	fullID := "abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+	ctr := dockertypes.Container{
+		ID:      fullID,
+		Names:   []string{},
+		State:   "exited",
+		Created: 0,
+	}
+
+	r := normalizeContainer(ctr)
+	assert.Equal(t, fullID, r.ID, "ID must be the full ID")
+	assert.Equal(t, fullID[:12], r.Name, "Name must be the 12-char short ID when no name exists")
 }
 
 func TestClientPing_RequiresRunningDocker(t *testing.T) {

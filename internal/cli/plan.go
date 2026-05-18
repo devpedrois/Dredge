@@ -53,10 +53,8 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 		output.FormatPlanTable(plan, os.Stdout)
 	}
 
-	// [SECURITY] Exit code 1 for pending deletions — enables scripting:
-	// `dredge plan || dredge sweep --yes`
 	if len(plan.Deletions) > 0 {
-		os.Exit(1)
+		return ErrPendingDeletions
 	}
 
 	return nil

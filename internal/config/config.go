@@ -184,6 +184,16 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// [SECURITY] Strict config validation — negative image unused_older_than silently
+	// disables the rule in the engine (threshold > 0 check). Reject explicitly so
+	// misconfigurations surface immediately rather than producing a silent no-op.
+	if c.Policies.Images.UnusedOlderThan < 0 {
+		return fmt.Errorf(
+			"invalid duration for images.unused_older_than: must be >= 0, got %s",
+			c.Policies.Images.UnusedOlderThan,
+		)
+	}
+
 	if c.Watch.Interval > 0 && c.Watch.Interval < time.Minute {
 		return fmt.Errorf("watch interval must be >= 1 minute, got %s", c.Watch.Interval)
 	}

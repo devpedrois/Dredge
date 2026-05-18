@@ -104,7 +104,7 @@ func (e *Engine) evaluate(r *model.Resource) model.Decision {
 			return del("dangling image (<none>:<none>)", "image-rule:dangling")
 		}
 		threshold := e.config.Policies.Images.UnusedOlderThan
-		if threshold > 0 && r.State != "dangling" && len(r.References) == 0 && time.Since(r.CreatedAt) > threshold {
+		if threshold > 0 && r.State != "dangling" && len(r.References) == 0 && time.Since(r.CreatedAt) >= threshold {
 			return del(fmt.Sprintf("unused image older than %s", threshold), "image-rule:unused")
 		}
 	case model.TypeVolume:

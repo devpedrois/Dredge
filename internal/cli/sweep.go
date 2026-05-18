@@ -28,12 +28,18 @@ var sweepCmd = &cobra.Command{
 func runSweep(cmd *cobra.Command, _ []string) error {
 	yes, _ := cmd.Flags().GetBool("yes")
 
-	ctx, cancel := context.WithTimeout(context.Background(), appCtx.Config.Docker.Timeout)
-	defer cancel()
+	// [SECURITY] Separate contexts for collection and execution:
+	// - collectCtx: bounded timeout for Docker list operations.
+	// - sweepCtx: unbounded at CLI level; each Docker call inside the sweeper
+	//   adds its own per-operation timeout via the Docker client wrapper.
+	// Using a single shared context caused sweep to inherit the collection's
+	// expiry, making all deletions fail silently after interactive confirmation.
+	collectCtx, collectCancel := context.WithTimeout(context.Background(), appCtx.Config.Docker.Timeout)
+	defer collectCancel()
 
 	// [SECURITY] Sweep uses same evaluate+plan code as plan command — dry-run parity guaranteed.
 	coll := collector.New(appCtx.Docker, appCtx.Logger)
-	inventory, err := coll.CollectAll(ctx)
+	inventory, err := coll.CollectAll(collectCtx)
 	if err != nil {
 		return fmt.Errorf("collecting Docker resources: %w", err)
 	}
@@ -87,7 +93,7 @@ func runSweep(cmd *cobra.Command, _ []string) error {
 	}
 
 	sw := sweeper.New(appCtx.Docker, appCtx.Logger, appCtx.Config.Protection.Label)
-	result := sw.Execute(ctx, plan)
+	result := sw.Execute(context.Background(), plan)
 
 	var recovered int64
 	for _, d := range result.Succeeded {

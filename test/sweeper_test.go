@@ -42,7 +42,10 @@ func newMockDockerSweeper() *mockDockerSweeper {
 	}
 }
 
-func (m *mockDockerSweeper) RemoveContainer(_ context.Context, id string) error {
+func (m *mockDockerSweeper) RemoveContainer(ctx context.Context, id string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err, ok := m.removeErrors[id]; ok {
 		return err
 	}
@@ -51,7 +54,10 @@ func (m *mockDockerSweeper) RemoveContainer(_ context.Context, id string) error 
 	return nil
 }
 
-func (m *mockDockerSweeper) RemoveImage(_ context.Context, id string) error {
+func (m *mockDockerSweeper) RemoveImage(ctx context.Context, id string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err, ok := m.removeErrors[id]; ok {
 		return err
 	}
@@ -60,7 +66,10 @@ func (m *mockDockerSweeper) RemoveImage(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDockerSweeper) RemoveVolume(_ context.Context, name string) error {
+func (m *mockDockerSweeper) RemoveVolume(ctx context.Context, name string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err, ok := m.removeErrors[name]; ok {
 		return err
 	}
@@ -69,7 +78,10 @@ func (m *mockDockerSweeper) RemoveVolume(_ context.Context, name string) error {
 	return nil
 }
 
-func (m *mockDockerSweeper) RemoveNetwork(_ context.Context, id string) error {
+func (m *mockDockerSweeper) RemoveNetwork(ctx context.Context, id string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err, ok := m.removeErrors[id]; ok {
 		return err
 	}
@@ -78,7 +90,10 @@ func (m *mockDockerSweeper) RemoveNetwork(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDockerSweeper) InspectContainer(_ context.Context, id string) (bool, string, error) {
+func (m *mockDockerSweeper) InspectContainer(ctx context.Context, id string) (bool, string, error) {
+	if ctx.Err() != nil {
+		return false, "", ctx.Err()
+	}
 	state, ok := m.containers[id]
 	if !ok {
 		return false, "", nil
@@ -86,15 +101,24 @@ func (m *mockDockerSweeper) InspectContainer(_ context.Context, id string) (bool
 	return true, state, nil
 }
 
-func (m *mockDockerSweeper) InspectImage(_ context.Context, id string) (bool, error) {
+func (m *mockDockerSweeper) InspectImage(ctx context.Context, id string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	return m.images[id], nil
 }
 
-func (m *mockDockerSweeper) InspectVolume(_ context.Context, name string) (bool, error) {
+func (m *mockDockerSweeper) InspectVolume(ctx context.Context, name string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	return m.volumes[name], nil
 }
 
-func (m *mockDockerSweeper) InspectNetwork(_ context.Context, id string) (bool, error) {
+func (m *mockDockerSweeper) InspectNetwork(ctx context.Context, id string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	return m.networks[id], nil
 }
 

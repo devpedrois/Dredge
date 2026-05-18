@@ -34,6 +34,9 @@ func (c *Client) ListContainers(ctx context.Context) ([]model.Resource, error) {
 }
 
 func normalizeContainer(ctr dockertypes.Container) model.Resource {
+	// [SECURITY] Full ID stored for unambiguous deletion — 12-char short IDs can
+	// collide when two containers share the same prefix, causing the wrong container
+	// to be targeted by Docker API calls.
 	name := ctr.ID
 	if len(ctr.ID) >= 12 {
 		name = ctr.ID[:12]
@@ -43,9 +46,6 @@ func normalizeContainer(ctr dockertypes.Container) model.Resource {
 	}
 
 	id := ctr.ID
-	if len(ctr.ID) >= 12 {
-		id = ctr.ID[:12]
-	}
 
 	// Collect named volume mounts so ResolveReferences can build volume dependency graph.
 	// [SECURITY] Named volume mounts are tracked to prevent orphan-deletion of mounted volumes.

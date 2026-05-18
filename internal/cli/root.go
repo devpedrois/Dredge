@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,15 @@ import (
 	"github.com/user/dredge/internal/docker"
 	"github.com/user/dredge/internal/logger"
 )
+
+// ErrPendingDeletions is returned by the plan command when there are resources
+// to delete. main.go translates this to exit code 1, enabling scripting:
+//
+//	dredge plan || dredge sweep --yes
+//
+// Using a sentinel error instead of os.Exit(1) inside RunE ensures that all
+// defers run correctly and the function remains unit-testable.
+var ErrPendingDeletions = errors.New("pending deletions found")
 
 // AppContext holds initialized dependencies shared across all subcommands.
 type AppContext struct {

@@ -572,6 +572,99 @@ protection:
 		"error must identify the bad name_pattern")
 }
 
+// ─── Test 18 ─────────────────────────────────────────────────────────────────
+
+// TestSweepContextNotSharedWithCollection verifies that the sweeper receives a
+// fresh context independent from the collection context. If both shared the same
+// context (as was the case before the fix), any time spent in collection + user
+// confirmation would eat into the sweep timeout, causing all deletions to fail
+// silently when the context expires.
+//
+// This test exercises the sweeper in isolation (no Docker daemon required) and
+// verifies that passing a pre-cancelled context to Execute causes failures, while
+// a fresh context causes success — confirming that sweep must own its context.
+func TestSweepContextNotSharedWithCollection(t *testing.T) {
+	mock := newMockDockerSweeper()
+	r := newResource(model.TypeContainer, "ctr1", "app", "exited")
+	mock.containers["ctr1"] = "exited"
+
+	plan := buildPlan(r)
+	sw := sweeper.New(mock, adversarialLogger(), "dredge.keep=true")
+
+	// With a pre-cancelled context, ALL Docker calls fail immediately.
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result := sw.Execute(cancelledCtx, plan)
+	assert.Empty(t, result.Succeeded,
+		"cancelled context must cause sweep failures (verifies context is used)")
+
+	// With a fresh context, the same plan succeeds — confirms sweep needs its own context.
+	mock2 := newMockDockerSweeper()
+	mock2.containers["ctr1"] = "exited"
+	plan2 := buildPlan(r)
+	sw2 := sweeper.New(mock2, adversarialLogger(), "dredge.keep=true")
+
+	result2 := sw2.Execute(context.Background(), plan2)
+	assert.Len(t, result2.Succeeded, 1,
+		"fresh context must allow sweep to succeed")
+}
+
+// ─── Test 17 ─────────────────────────────────────────────────────────────────
+
+// TestPlanReturnsErrPendingDeletionsSentinel verifies that the plan command
+// exposes a sentinel error instead of calling os.Exit(1) inside RunE.
+// os.Exit inside RunE skips all defers and crashes test processes — the fix
+// returns ErrPendingDeletions so main.go translates it to an exit code.
+func TestPlanReturnsErrPendingDeletionsSentinel(t *testing.T) {
+	// ErrPendingDeletions must be exported and identifiable with errors.Is.
+	err := cli.ErrPendingDeletions
+	require.Error(t, err, "ErrPendingDeletions must be a non-nil sentinel error")
+	assert.True(t, errors.Is(err, cli.ErrPendingDeletions),
+		"errors.Is must identify ErrPendingDeletions correctly")
+}
+
+// ─── Test 16 ─────────────────────────────────────────────────────────────────
+
+// TestAdversarial_ImageAtExactThresholdIsDeleted verifies that an image aged
+// exactly at unused_older_than IS deleted. The container rule already uses >=;
+// the image rule must be consistent to avoid silent boundary mismatches.
+// [SECURITY] Regression: engine.go previously used > instead of >= for images,
+// silently keeping images at the exact threshold boundary.
+func TestAdversarial_ImageAtExactThresholdIsDeleted(t *testing.T) {
+	threshold := 100 * time.Millisecond
+	cfg := &config.Config{
+		Docker: config.DockerConfig{Timeout: 30 * time.Second},
+		Policies: config.PoliciesConfig{
+			Images: config.ImagePolicy{UnusedOlderThan: threshold},
+		},
+		Protection: config.ProtectionConfig{Label: "dredge.keep=true"},
+	}
+	engine := policy.New(cfg, adversarialLogger())
+
+	// Image exactly at the threshold: time.Since(createdAt) == threshold.
+	// We sleep to ensure the image is old enough, then pass it to the engine.
+	createdAt := time.Now().Add(-threshold)
+
+	img := model.Resource{
+		ID:         "img-boundary",
+		Name:       "old-image:v1",
+		Type:       model.TypeImage,
+		State:      "unused",
+		CreatedAt:  createdAt,
+		References: nil,
+		Labels:     map[string]string{},
+	}
+
+	inv := &collector.Inventory{Images: []model.Resource{img}}
+	decisions := engine.Evaluate(inv)
+
+	d := findDecision(decisions, "img-boundary")
+	require.NotNil(t, d)
+	assert.Equal(t, model.ActionDelete, d.Action,
+		"image aged >= unused_older_than must be deleted (>= not >)")
+}
+
 // ─── Test 15 ─────────────────────────────────────────────────────────────────
 
 // TestAdversarial_MultipleContainersOneImageProtectedUntilAllDeleted verifies

@@ -54,6 +54,49 @@ func TestWatchHandlesSignalGracefully(t *testing.T) {
 	assert.NoError(t, err, "signal must cause clean shutdown with nil error")
 }
 
+// TestWatchSIGTERMDuringSlowCyclePropagatesCancellation verifies that sending
+// SIGTERM via sigChan while a slow cycle is running propagates context
+// cancellation to the running cycle so it can exit early.
+//
+// This test uses context.Background() (the production path in watch.go) — NOT
+// a pre-cancelled context — to reproduce the real scenario: the watcher must
+// internally cancel the cycle context when it receives a signal, not just wait.
+func TestWatchSIGTERMDuringSlowCyclePropagatesCancellation(t *testing.T) {
+	// Cycle sleeps 500ms but exits early if its context is cancelled.
+	cycleFn := func(ctx context.Context) watcher.CycleResult {
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+		}
+		return watcher.CycleResult{Empty: true}
+	}
+
+	// Use context.Background() — this is what watch.go passes in production.
+	// The watcher must cancel the cycle via its own mechanism, not rely on
+	// the caller to cancel.
+	w := watcher.New(cycleFn, 10*time.Second, newSweeperLogger())
+	sigChan := make(chan os.Signal, 1)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- w.Run(context.Background(), sigChan)
+	}()
+
+	// Let the first cycle start, then send signal.
+	time.Sleep(20 * time.Millisecond)
+	sigChan <- os.Interrupt
+
+	start := time.Now()
+	select {
+	case <-done:
+		elapsed := time.Since(start)
+		assert.Less(t, elapsed, 200*time.Millisecond,
+			"Run must return within 200ms after signal — cycle must be cancelled, not awaited for 500ms")
+	case <-time.After(600 * time.Millisecond):
+		t.Fatal("Run blocked for 600ms after SIGTERM — signal did not propagate to running cycle")
+	}
+}
+
 // TestWatchSkipsOverlappingCycles verifies a slow cycle prevents concurrent
 // execution — the daemon must never run two cycles in parallel.
 // [SECURITY] Prevent overlapping executions — race conditions against Docker state.

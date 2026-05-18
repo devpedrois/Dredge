@@ -1,6 +1,8 @@
 package test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +168,50 @@ protection:
 			}
 		})
 	}
+}
+
+// TestConfigLoadFromHomeDir verifies that config search includes the home directory.
+// viper v1.19+ calls os.ExpandEnv in absPathify so "$HOME" is correctly expanded.
+func TestConfigLoadFromHomeDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	// Write a minimal config to ~/.dredge.yaml temporarily.
+	cfgPath := filepath.Join(home, ".dredge.yaml")
+	content := `
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+`
+	// Skip if file already exists to avoid clobbering real config.
+	if _, statErr := os.Stat(cfgPath); statErr == nil {
+		t.Skip("~/.dredge.yaml already exists — skipping to avoid overwrite")
+	}
+
+	require.NoError(t, os.WriteFile(cfgPath, []byte(content), 0600))
+	t.Cleanup(func() { os.Remove(cfgPath) })
+
+	cfg, err := config.Load("")
+	require.NoError(t, err, "config.Load('') must find ~/.dredge.yaml when home dir is properly searched")
+	assert.Equal(t, "/var/run/docker.sock", cfg.Docker.Socket,
+		"values from ~/.dredge.yaml must be loaded")
+}
+
+// TestConfigNegativeImageUnusedOlderThanRejected verifies that a negative duration
+// for images.unused_older_than is rejected by Validate, matching the strict validation
+// already applied to container rules.
+func TestConfigNegativeImageUnusedOlderThanRejected(t *testing.T) {
+	_, err := loadInlineConfig(`
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+policies:
+  images:
+    unused_older_than: "-1h"
+`)
+	require.Error(t, err, "negative images.unused_older_than must be rejected")
+	assert.Contains(t, err.Error(), "unused_older_than",
+		"error must name the invalid field")
 }
 
 // loadInlineConfig writes a YAML string to a temp file and loads it.
