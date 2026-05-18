@@ -7,7 +7,10 @@ import "github.com/user/dredge/internal/model"
 // will be kept.
 // [SECURITY] Dependency graph — image protected because a kept container needs it.
 func ResolveGraph(decisions []model.Decision) []model.Decision {
-	// Build the set of containers marked for deletion and a name lookup map.
+	// result is a shallow copy: Decision value fields (Action, Reason, RuleMatch) are
+	// independent per element, but Resource pointers are shared with the input slice.
+	// Callers must not mutate Resource fields via the returned slice.
+	knownContainers := make(map[string]bool, len(decisions))
 	deletedContainers := make(map[string]bool, len(decisions))
 	containerNames := make(map[string]string, len(decisions))
 
@@ -15,15 +18,13 @@ func ResolveGraph(decisions []model.Decision) []model.Decision {
 		if d.Resource.Type != model.TypeContainer {
 			continue
 		}
+		knownContainers[d.Resource.ID] = true
 		containerNames[d.Resource.ID] = d.Resource.Name
 		if d.Action == model.ActionDelete {
 			deletedContainers[d.Resource.ID] = true
 		}
 	}
 
-	// result is a shallow copy: Decision value fields (Action, Reason, RuleMatch) are
-	// independent per element, but Resource pointers are shared with the input slice.
-	// Callers must not mutate Resource fields via the returned slice.
 	result := make([]model.Decision, len(decisions))
 	copy(result, decisions)
 
@@ -31,9 +32,11 @@ func ResolveGraph(decisions []model.Decision) []model.Decision {
 		if d.Resource.Type != model.TypeImage || d.Action != model.ActionDelete {
 			continue
 		}
-		// If any referencing container is NOT being deleted, protect the image.
+		// If any KNOWN referencing container is NOT being deleted, protect the image.
+		// Unknown IDs (not present in this inventory snapshot) are not treated as kept.
+		// [SECURITY] Dependency graph — image protected because a kept container needs it.
 		for _, cID := range d.Resource.References {
-			if !deletedContainers[cID] {
+			if knownContainers[cID] && !deletedContainers[cID] {
 				name := containerNames[cID]
 				if name == "" {
 					name = cID
