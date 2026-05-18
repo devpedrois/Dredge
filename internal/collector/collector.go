@@ -24,6 +24,14 @@ type DockerClient interface {
 	Close() error
 }
 
+// CollectionWarning records a partial failure during resource collection.
+// When only some resource types fail, the Collector returns what it could
+// gather rather than aborting entirely.
+type CollectionWarning struct {
+	ResourceType string
+	Error        error
+}
+
 // Inventory is a point-in-time snapshot of all Docker resources on the daemon.
 type Inventory struct {
 	Containers  []model.Resource
@@ -31,6 +39,7 @@ type Inventory struct {
 	Volumes     []model.Resource
 	Networks    []model.Resource
 	CollectedAt time.Time
+	Warnings    []CollectionWarning // non-nil when some resource types failed to list
 }
 
 // Collector gathers all Docker resources and normalises them into an Inventory.
@@ -83,10 +92,35 @@ func (c *Collector) CollectAll(ctx context.Context) (*Inventory, error) {
 
 	wg.Wait()
 
-	for _, err := range []error{errContainers, errImages, errVolumes, errNetworks} {
-		if err != nil {
-			return nil, err
+	// If all four types failed, there is nothing useful to return.
+	// If at least one succeeded, return a partial inventory with warnings.
+	typeErrors := []struct {
+		name string
+		err  error
+	}{
+		{"containers", errContainers},
+		{"images", errImages},
+		{"volumes", errVolumes},
+		{"networks", errNetworks},
+	}
+
+	var warnings []CollectionWarning
+	allFailed := true
+	for _, te := range typeErrors {
+		if te.err == nil {
+			allFailed = false
+		} else {
+			warnings = append(warnings, CollectionWarning{ResourceType: te.name, Error: te.err})
 		}
+	}
+
+	if allFailed {
+		return nil, errContainers
+	}
+
+	for _, w := range warnings {
+		c.logger.Warn("partial collection failure — resource type skipped",
+			"type", w.ResourceType, "error", w.Error)
 	}
 
 	inv := &Inventory{
@@ -95,6 +129,7 @@ func (c *Collector) CollectAll(ctx context.Context) (*Inventory, error) {
 		Volumes:     volumes,
 		Networks:    networks,
 		CollectedAt: time.Now(),
+		Warnings:    warnings,
 	}
 
 	inv.ResolveReferences()
@@ -104,6 +139,7 @@ func (c *Collector) CollectAll(ctx context.Context) (*Inventory, error) {
 		"images", len(images),
 		"volumes", len(volumes),
 		"networks", len(networks),
+		"warnings", len(warnings),
 	)
 
 	return inv, nil

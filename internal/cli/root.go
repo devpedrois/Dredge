@@ -69,6 +69,13 @@ var rootCmd = &cobra.Command{
 		}
 		return nil
 	},
+
+	PersistentPostRunE: func(_ *cobra.Command, _ []string) error {
+		if appCtx != nil && appCtx.Docker != nil {
+			return appCtx.Docker.Close()
+		}
+		return nil
+	},
 }
 
 // Execute runs the root cobra command.

@@ -91,8 +91,18 @@ func runSweep(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Bound total sweep time: each resource needs at most 2 Docker calls (verify + delete),
+	// each capped at docker.Timeout. A floor of 5 minutes prevents premature cancellation
+	// on small plans. cmd.Context() propagates SIGTERM/SIGINT cancellation.
+	sweepTimeout := time.Duration(len(plan.Deletions)) * 2 * appCtx.Config.Docker.Timeout
+	if sweepTimeout < 5*time.Minute {
+		sweepTimeout = 5 * time.Minute
+	}
+	sweepCtx, sweepCancel := context.WithTimeout(cmd.Context(), sweepTimeout)
+	defer sweepCancel()
+
 	sw := sweeper.New(appCtx.Docker, appCtx.Logger, appCtx.Config.Protection.Label)
-	result := sw.Execute(context.Background(), plan)
+	result := sw.Execute(sweepCtx, plan)
 
 	var recovered int64
 	for _, d := range result.Succeeded {

@@ -193,11 +193,18 @@ func (c *Config) Validate() error {
 		)
 	}
 
-	if c.Watch.Interval > 0 && c.Watch.Interval < time.Minute {
+	// [SECURITY] interval 0 panics in time.NewTicker; any value below 1 minute is operationally unsafe.
+	if c.Watch.Interval < time.Minute {
 		return fmt.Errorf("watch interval must be >= 1 minute, got %s", c.Watch.Interval)
 	}
 
-	if c.Protection.Label != "" && !strings.Contains(c.Protection.Label, "=") {
+	// [SECURITY] Empty protection label silently disables all label-based resource protection.
+	// Restore to the safe default rather than leaving protection inadvertently disabled.
+	if c.Protection.Label == "" {
+		c.Protection.Label = "dredge.keep=true"
+	}
+
+	if !strings.Contains(c.Protection.Label, "=") {
 		return fmt.Errorf(
 			"invalid protection label format: %q — must be in key=value format",
 			c.Protection.Label,

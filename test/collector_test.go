@@ -21,10 +21,19 @@ type mockDockerClient struct {
 	images     []model.Resource
 	volumes    []model.Resource
 	networks   []model.Resource
-	listErr    error
+	listErr    error // affects all types when set
+
+	// Per-type errors override listErr when set.
+	containerErr error
+	imageErr     error
+	volumeErr    error
+	networkErr   error
 }
 
 func (m *mockDockerClient) ListContainers(_ context.Context) ([]model.Resource, error) {
+	if m.containerErr != nil {
+		return nil, m.containerErr
+	}
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -32,6 +41,9 @@ func (m *mockDockerClient) ListContainers(_ context.Context) ([]model.Resource, 
 }
 
 func (m *mockDockerClient) ListImages(_ context.Context) ([]model.Resource, error) {
+	if m.imageErr != nil {
+		return nil, m.imageErr
+	}
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -39,6 +51,9 @@ func (m *mockDockerClient) ListImages(_ context.Context) ([]model.Resource, erro
 }
 
 func (m *mockDockerClient) ListVolumes(_ context.Context) ([]model.Resource, error) {
+	if m.volumeErr != nil {
+		return nil, m.volumeErr
+	}
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -46,6 +61,9 @@ func (m *mockDockerClient) ListVolumes(_ context.Context) ([]model.Resource, err
 }
 
 func (m *mockDockerClient) ListNetworks(_ context.Context) ([]model.Resource, error) {
+	if m.networkErr != nil {
+		return nil, m.networkErr
+	}
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -202,6 +220,31 @@ func TestDanglingImage_StateIsDangling(t *testing.T) {
 	require.Len(t, inv.Images, 1)
 	assert.Equal(t, model.StateDangling, inv.Images[0].State)
 	assert.Equal(t, "<none>:<none>", inv.Images[0].Name)
+}
+
+// TestCollectAll_PartialFailureReturnsInventoryWithWarnings verifies that when only
+// some resource types fail to list, the collector returns a partial inventory
+// with warnings rather than aborting entirely.
+// Motivation: Docker rootless or restricted environments may lack permission to
+// list networks/volumes while containers and images work fine.
+func TestCollectAll_PartialFailureReturnsInventoryWithWarnings(t *testing.T) {
+	mock := &mockDockerClient{
+		containers:  []model.Resource{containerA},
+		images:      []model.Resource{imageX},
+		volumes:     []model.Resource{volumeV},
+		networkErr:  errors.New("permission denied: cannot list networks"),
+	}
+
+	inv, err := newTestCollector(mock).CollectAll(context.Background())
+
+	require.NoError(t, err, "partial failure must not return error when some types succeed")
+	require.NotNil(t, inv)
+	assert.Len(t, inv.Containers, 1)
+	assert.Len(t, inv.Images, 1)
+	assert.Len(t, inv.Volumes, 1)
+	assert.Empty(t, inv.Networks, "failed type must be empty in partial inventory")
+	require.Len(t, inv.Warnings, 1, "one warning must be recorded for the failed type")
+	assert.Contains(t, inv.Warnings[0].Error.Error(), "networks")
 }
 
 func TestContainerMetadata_CapturedCorrectly(t *testing.T) {

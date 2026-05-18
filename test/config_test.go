@@ -197,6 +197,39 @@ docker:
 		"values from ~/.dredge.yaml must be loaded")
 }
 
+// TestConfigEmptyProtectionLabelDefaultsToKeepTrue verifies that explicitly setting
+// protection.label to "" is handled safely by defaulting to "dredge.keep=true".
+// Without this, an explicit empty label silently disables all label-based protection.
+// [SECURITY] Empty label = all label protection disabled without user awareness.
+func TestConfigEmptyProtectionLabelDefaultsToKeepTrue(t *testing.T) {
+	cfg, err := loadInlineConfig(`
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+protection:
+  label: ""
+`)
+	require.NoError(t, err, "empty protection label must not error — must default safely")
+	require.NotNil(t, cfg)
+	assert.Equal(t, "dredge.keep=true", cfg.Protection.Label,
+		"empty label must be restored to default to prevent silent protection bypass")
+}
+
+// TestConfigWatchIntervalZeroRejected verifies that explicitly setting watch.interval
+// to 0 is rejected at validation time. time.NewTicker(0) panics at runtime.
+func TestConfigWatchIntervalZeroRejected(t *testing.T) {
+	_, err := loadInlineConfig(`
+docker:
+  socket: "/var/run/docker.sock"
+  timeout: "30s"
+watch:
+  interval: "0s"
+`)
+	require.Error(t, err, "watch interval of 0 must be rejected to prevent ticker panic")
+	assert.Contains(t, err.Error(), "watch interval",
+		"error must name the invalid field")
+}
+
 // TestConfigNegativeImageUnusedOlderThanRejected verifies that a negative duration
 // for images.unused_older_than is rejected by Validate, matching the strict validation
 // already applied to container rules.
