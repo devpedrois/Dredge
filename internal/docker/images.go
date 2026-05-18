@@ -48,9 +48,16 @@ func normalizeImage(img image.Summary) model.Resource {
 		}
 	}
 
-	state := "used"
+	state := model.StateUsed
 	if isDangling {
-		state = "dangling"
+		state = model.StateDangling
+	}
+
+	// img.Size can be -1 when Docker has not computed it yet.
+	// Clamp to 0 to prevent uint64 wrap-around when formatting human-readable sizes.
+	size := img.Size
+	if size < 0 {
+		size = 0
 	}
 
 	return model.Resource{
@@ -59,7 +66,7 @@ func normalizeImage(img image.Summary) model.Resource {
 		Type:      model.TypeImage,
 		State:     state,
 		CreatedAt: time.Unix(img.Created, 0),
-		Size:      img.Size,
+		Size:      size,
 		Labels:    img.Labels,
 	}
 }

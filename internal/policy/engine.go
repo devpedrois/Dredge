@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/user/dredge/internal/collector"
@@ -61,7 +60,7 @@ func (e *Engine) evaluate(r *model.Resource) model.Decision {
 
 	// Step 1 — Hardcoded protections checked before any config-driven rule.
 	// [SECURITY] Running container protection — hardcoded, never configurable.
-	if r.Type == model.TypeContainer && r.State == "running" {
+	if r.Type == model.TypeContainer && r.State == model.StateRunning {
 		return keep("running container — always protected")
 	}
 	// [SECURITY] Default networks (bridge, host, none) — never deleted.
@@ -71,7 +70,7 @@ func (e *Engine) evaluate(r *model.Resource) model.Decision {
 
 	// Step 2 — Label protection.
 	// [SECURITY] Protection label is sacrosanct — checked before any deletion rule.
-	if e.matchesProtectionLabel(r) {
+	if model.MatchesProtectionLabel(e.config.Protection.Label, r.Labels) {
 		return keep("protected by label: " + e.config.Protection.Label)
 	}
 
@@ -92,7 +91,7 @@ func (e *Engine) evaluate(r *model.Resource) model.Decision {
 	switch r.Type {
 	case model.TypeContainer:
 		for _, rule := range e.config.Policies.Containers {
-			if r.State == rule.Status && time.Since(r.CreatedAt) >= rule.OlderThan {
+			if r.State == model.ResourceState(rule.Status) && time.Since(r.CreatedAt) >= rule.OlderThan {
 				return del(
 					fmt.Sprintf("container status %q older than %s", rule.Status, rule.OlderThan),
 					"container-rule:"+rule.Status,
@@ -100,11 +99,11 @@ func (e *Engine) evaluate(r *model.Resource) model.Decision {
 			}
 		}
 	case model.TypeImage:
-		if r.State == "dangling" && e.config.Policies.Images.Dangling {
+		if r.State == model.StateDangling && e.config.Policies.Images.Dangling {
 			return del("dangling image (<none>:<none>)", "image-rule:dangling")
 		}
 		threshold := e.config.Policies.Images.UnusedOlderThan
-		if threshold > 0 && r.State != "dangling" && len(r.References) == 0 && time.Since(r.CreatedAt) >= threshold {
+		if threshold > 0 && r.State != model.StateDangling && len(r.References) == 0 && time.Since(r.CreatedAt) >= threshold {
 			return del(fmt.Sprintf("unused image older than %s", threshold), "image-rule:unused")
 		}
 	case model.TypeVolume:
@@ -124,19 +123,3 @@ func (e *Engine) evaluate(r *model.Resource) model.Decision {
 	return keep("no matching deletion rule")
 }
 
-// matchesProtectionLabel returns true when the resource carries the configured protection label.
-// [SECURITY] Label format "key=value" is validated at config load time; SplitN is safe here.
-func (e *Engine) matchesProtectionLabel(r *model.Resource) bool {
-	if e.config.Protection.Label == "" {
-		return false
-	}
-	parts := strings.SplitN(e.config.Protection.Label, "=", 2)
-	if len(parts) != 2 {
-		e.logger.Warn("protection label is malformed — label protection disabled",
-			"label", e.config.Protection.Label)
-		return false
-	}
-	key, val := parts[0], parts[1]
-	v, ok := r.Labels[key]
-	return ok && v == val
-}

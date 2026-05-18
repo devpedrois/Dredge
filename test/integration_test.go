@@ -23,6 +23,7 @@ import (
 	"github.com/user/dredge/internal/collector"
 	"github.com/user/dredge/internal/config"
 	"github.com/user/dredge/internal/docker"
+	"github.com/user/dredge/internal/model"
 	"github.com/user/dredge/internal/planner"
 	"github.com/user/dredge/internal/policy"
 	"github.com/user/dredge/internal/stats"
@@ -380,7 +381,7 @@ func TestIntegration_RunningContainerProtectedEndToEnd(t *testing.T) {
 	exists, state, err := integCli.InspectContainer(ctx, id)
 	require.NoError(t, err)
 	assert.True(t, exists, "running container must still exist after plan")
-	assert.Equal(t, "running", state, "container must still be in running state")
+	assert.Equal(t, model.StateRunning, state, "container must still be in running state")
 }
 
 // ─── Test 5: Image dependency graph with real Docker IDs ─────────────────────
@@ -505,7 +506,7 @@ func TestIntegration_TOCTOUContainerRestartedBetweenPlanAndSweep(t *testing.T) {
 	exists, state, err := integCli.InspectContainer(ctx, id)
 	require.NoError(t, err)
 	assert.True(t, exists, "TOCTOU: container must still exist after sweep")
-	assert.Equal(t, "running", state, "TOCTOU: container must still be running")
+	assert.Equal(t, model.StateRunning, state, "TOCTOU: container must still be running")
 
 	// The restart means sweep skipped it — it should NOT appear in Succeeded.
 	for _, s := range result.Succeeded {

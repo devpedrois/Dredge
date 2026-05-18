@@ -72,13 +72,24 @@ func normalizeContainer(ctr dockertypes.Container) model.Resource {
 		}
 	}
 
+	// [SECURITY] Normalize state to lowercase ResourceState — Docker SDK may return
+	// mixed-case values across versions (e.g. "Exited" vs "exited").
+	state := model.ResourceState(strings.ToLower(ctr.State))
+
+	// SizeRw and SizeRootFs can be -1 when Docker has not computed them yet.
+	// Clamp to 0 to prevent uint64 wrap-around when formatting human-readable sizes.
+	size := ctr.SizeRw + ctr.SizeRootFs
+	if size < 0 {
+		size = 0
+	}
+
 	return model.Resource{
 		ID:                  id,
 		Name:                name,
 		Type:                model.TypeContainer,
-		State:               ctr.State,
+		State:               state,
 		CreatedAt:           time.Unix(ctr.Created, 0),
-		Size:                ctr.SizeRw + ctr.SizeRootFs,
+		Size:                size,
 		Labels:              ctr.Labels,
 		ImageID:             ctr.ImageID,
 		MountedVolumes:      mountedVolumes,
@@ -96,8 +107,9 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 
 // InspectContainer returns the current existence and state of a container.
 // Returns exists=false (no error) when the container is not found.
+// State is normalized to lowercase ResourceState to match model constants.
 // [SECURITY] Used by sweeper for TOCTOU re-check before each deletion.
-func (c *Client) InspectContainer(ctx context.Context, id string) (exists bool, state string, err error) {
+func (c *Client) InspectContainer(ctx context.Context, id string) (exists bool, state model.ResourceState, err error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -108,5 +120,5 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (exists bool, 
 		}
 		return false, "", fmt.Errorf("inspecting container %s: %w", id, inspectErr)
 	}
-	return true, info.State.Status, nil
+	return true, model.ResourceState(strings.ToLower(info.State.Status)), nil
 }

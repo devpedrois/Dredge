@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/user/dredge/internal/collector"
@@ -60,7 +59,6 @@ func buildCycleFn() watcher.CycleFunc {
 
 		p := planner.New(appCtx.Logger, appCtx.Config.Protection.Label)
 		plan := p.CreatePlan(decisions)
-		plan.Timestamp = time.Now()
 
 		if len(plan.Deletions) == 0 {
 			return watcher.CycleResult{Empty: true}

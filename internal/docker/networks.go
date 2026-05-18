@@ -47,7 +47,7 @@ func normalizeNetwork(net network.Summary) model.Resource {
 		ID:        id,
 		Name:      net.Name,
 		Type:      model.TypeNetwork,
-		State:     "active",
+		State:     model.StateActive,
 		CreatedAt: net.Created,
 		Labels:    net.Labels,
 		IsDefault: defaultDockerNetworks[net.Name],

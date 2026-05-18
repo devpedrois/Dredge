@@ -3,7 +3,6 @@ package planner
 import (
 	"log/slog"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/user/dredge/internal/model"
@@ -43,7 +42,7 @@ func (p *Planner) CreatePlan(decisions []model.Decision) *model.ExecutionPlan {
 	for _, d := range decisions {
 		if d.Action == model.ActionDelete {
 			// [SECURITY] 3rd-layer label check — defense-in-depth against policy engine bugs.
-			if p.hasProtectionLabel(d.Resource) {
+			if model.MatchesProtectionLabel(p.protectionLabel, d.Resource.Labels) {
 				if p.logger != nil {
 					p.logger.Error("[SECURITY] protected resource reached planner — BUG in policy engine, skipping",
 						"id", d.Resource.ID, "type", d.Resource.Type, "name", d.Resource.Name)
@@ -87,16 +86,3 @@ func (p *Planner) CreatePlan(decisions []model.Decision) *model.ExecutionPlan {
 	}
 }
 
-// hasProtectionLabel returns true when r carries the configured protection label.
-// [SECURITY] 3rd-layer defense — label checked independently of policy engine and sweeper.
-func (p *Planner) hasProtectionLabel(r *model.Resource) bool {
-	if p.protectionLabel == "" || len(r.Labels) == 0 {
-		return false
-	}
-	parts := strings.SplitN(p.protectionLabel, "=", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	v, ok := r.Labels[parts[0]]
-	return ok && v == parts[1]
-}

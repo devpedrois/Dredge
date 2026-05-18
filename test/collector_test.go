@@ -65,7 +65,7 @@ var (
 		ID:        "aaa111aaa111",
 		Name:      "web-app",
 		Type:      model.TypeContainer,
-		State:     "exited",
+		State: model.StateExited,
 		CreatedAt: time.Now().Add(-25 * time.Hour),
 		Size:      1024,
 		Labels:    map[string]string{"env": "prod"},
@@ -75,7 +75,7 @@ var (
 		ID:        "bbb222bbb222",
 		Name:      "worker",
 		Type:      model.TypeContainer,
-		State:     "running",
+		State: model.StateRunning,
 		CreatedAt: time.Now().Add(-1 * time.Hour),
 		Labels:    map[string]string{},
 		ImageID:   "img111img111",
@@ -84,7 +84,7 @@ var (
 		ID:        "ccc333ccc333",
 		Name:      "old-job",
 		Type:      model.TypeContainer,
-		State:     "dead",
+		State: model.StateDead,
 		CreatedAt: time.Now().Add(-100 * time.Hour),
 		Labels:    map[string]string{},
 		ImageID:   "img222img222",
@@ -93,14 +93,14 @@ var (
 		ID:    "img111img111",
 		Name:  "nginx:latest",
 		Type:  model.TypeImage,
-		State: "used",
+		State: model.StateUsed,
 		Size:  50 * 1024 * 1024,
 	}
 	imageY = model.Resource{
 		ID:    "img222img222",
 		Name:  "<none>:<none>",
 		Type:  model.TypeImage,
-		State: "dangling",
+		State: model.StateDangling,
 		Size:  10 * 1024 * 1024,
 	}
 	volumeV = model.Resource{
@@ -190,7 +190,7 @@ func TestDanglingImage_StateIsDangling(t *testing.T) {
 		ID:    "ddd444ddd444",
 		Name:  "<none>:<none>",
 		Type:  model.TypeImage,
-		State: "dangling",
+		State: model.StateDangling,
 	}
 	mock := &mockDockerClient{
 		images: []model.Resource{dangling},
@@ -200,7 +200,7 @@ func TestDanglingImage_StateIsDangling(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, inv.Images, 1)
-	assert.Equal(t, "dangling", inv.Images[0].State)
+	assert.Equal(t, model.StateDangling, inv.Images[0].State)
 	assert.Equal(t, "<none>:<none>", inv.Images[0].Name)
 }
 
@@ -210,7 +210,7 @@ func TestContainerMetadata_CapturedCorrectly(t *testing.T) {
 		ID:        "fff666fff666",
 		Name:      "my-service",
 		Type:      model.TypeContainer,
-		State:     "exited",
+		State: model.StateExited,
 		CreatedAt: createdAt,
 		Size:      2048,
 		Labels:    map[string]string{"team": "platform", "env": "staging"},
@@ -228,7 +228,7 @@ func TestContainerMetadata_CapturedCorrectly(t *testing.T) {
 	assert.Equal(t, "fff666fff666", got.ID)
 	assert.Equal(t, "my-service", got.Name)
 	assert.Equal(t, model.TypeContainer, got.Type)
-	assert.Equal(t, "exited", got.State)
+	assert.Equal(t, model.StateExited, got.State)
 	assert.Equal(t, createdAt, got.CreatedAt)
 	assert.Equal(t, int64(2048), got.Size)
 	assert.Equal(t, map[string]string{"team": "platform", "env": "staging"}, got.Labels)

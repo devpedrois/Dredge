@@ -12,13 +12,13 @@ import (
 func buildInventory() *collector.Inventory {
 	return &collector.Inventory{
 		Containers: []model.Resource{
-			{ID: "c1", Name: "app1", Type: model.TypeContainer, State: "running"},
-			{ID: "c2", Name: "app2", Type: model.TypeContainer, State: "exited"},
-			{ID: "c3", Name: "app3", Type: model.TypeContainer, State: "exited"},
+			{ID: "c1", Name: "app1", Type: model.TypeContainer, State: model.StateRunning},
+			{ID: "c2", Name: "app2", Type: model.TypeContainer, State: model.StateExited},
+			{ID: "c3", Name: "app3", Type: model.TypeContainer, State: model.StateExited},
 		},
 		Images: []model.Resource{
-			{ID: "i1", Name: "myimage:latest", Type: model.TypeImage, State: ""},
-			{ID: "i2", Name: "<none>:<none>", Type: model.TypeImage, State: "dangling"},
+			{ID: "i1", Name: "myimage:latest", Type: model.TypeImage, State: model.StateUsed},
+			{ID: "i2", Name: "<none>:<none>", Type: model.TypeImage, State: model.StateDangling},
 		},
 		Volumes: []model.Resource{
 			{ID: "v1", Name: "v1", Type: model.TypeVolume},

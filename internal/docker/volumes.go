@@ -41,7 +41,7 @@ func normalizeVolume(vol *volume.Volume) model.Resource {
 		ID:        vol.Name,
 		Name:      vol.Name,
 		Type:      model.TypeVolume,
-		State:     "available",
+		State:     model.StateAvailable,
 		CreatedAt: createdAt,
 		Labels:    vol.Labels,
 	}

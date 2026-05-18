@@ -76,7 +76,7 @@ func TestAdversarial_RunningContainerNeverDeleted(t *testing.T) {
 		Containers: []model.Resource{
 			{
 				ID: "run-adv", Name: "critical-app", Type: model.TypeContainer,
-				State: "running", CreatedAt: time.Now().Add(-720 * time.Hour),
+				State: model.StateRunning, CreatedAt: time.Now().Add(-720 * time.Hour),
 				Labels: map[string]string{},
 			},
 		},
@@ -102,7 +102,7 @@ func TestAdversarial_ProtectionLabelSurvivesAllLayers(t *testing.T) {
 
 	protected := &model.Resource{
 		ID: "keep-me", Name: "critical-db", Type: model.TypeContainer,
-		State: "exited", CreatedAt: time.Now().Add(-48 * time.Hour),
+		State: model.StateExited, CreatedAt: time.Now().Add(-48 * time.Hour),
 		Labels: map[string]string{"dredge.keep": "true"},
 	}
 
@@ -130,7 +130,7 @@ func TestAdversarial_ProtectionLabelSurvivesAllLayers(t *testing.T) {
 	// Layer 3: sweeper must skip the resource even if it reached execution.
 	// [SECURITY] Simulates both policy engine and planner bugs — final safety net.
 	mock := newMockDockerSweeper()
-	mock.containers["keep-me"] = "exited"
+	mock.containers["keep-me"] = model.StateExited
 	deletion := model.Deletion{Resource: protected, Reason: "forged", Order: 1}
 	plan2 := &model.ExecutionPlan{Deletions: []model.Deletion{deletion}}
 	sw := sweeper.New(mock, adversarialLogger(), label)
@@ -153,12 +153,12 @@ func TestAdversarial_DependencyGraphPreventsOrphaning(t *testing.T) {
 	// Image is dangling and old → without graph protection, would be deleted.
 	container := model.Resource{
 		ID: "ctr-ref", Name: "protected-app", Type: model.TypeContainer,
-		State: "exited", CreatedAt: time.Now().Add(-48 * time.Hour),
+		State: model.StateExited, CreatedAt: time.Now().Add(-48 * time.Hour),
 		Labels: map[string]string{"dredge.keep": "true"},
 	}
 	image := model.Resource{
 		ID: "img-ref", Name: "<none>:<none>", Type: model.TypeImage,
-		State: "dangling", CreatedAt: time.Now().Add(-200 * time.Hour),
+		State: model.StateDangling, CreatedAt: time.Now().Add(-200 * time.Hour),
 		References: []string{"ctr-ref"},
 		Labels:     map[string]string{},
 	}
@@ -194,10 +194,10 @@ func TestAdversarial_TOCTOUContainerStartsBetweenPlanAndSweep(t *testing.T) {
 
 	r := &model.Resource{
 		ID: "ctr-toctou", Name: "app", Type: model.TypeContainer,
-		State: "exited", CreatedAt: time.Now().Add(-48 * time.Hour),
+		State: model.StateExited, CreatedAt: time.Now().Add(-48 * time.Hour),
 	}
 	// At plan time: exited. Between plan and sweep: container was restarted.
-	mock.containers["ctr-toctou"] = "running"
+	mock.containers["ctr-toctou"] = model.StateRunning
 
 	plan := buildPlan(r)
 	sw := sweeper.New(mock, adversarialLogger(), "dredge.keep=true")
@@ -294,15 +294,15 @@ func TestAdversarial_DefaultNetworksNeverDeleted(t *testing.T) {
 func TestAdversarial_SweepFailForwardOnPartialFailure(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	r1 := newResource(model.TypeContainer, "c1", "app1", "exited")
-	r2 := newResource(model.TypeContainer, "c2", "app2", "exited")
-	r3 := newResource(model.TypeContainer, "c3", "app3", "exited")
-	r4 := newResource(model.TypeVolume, "v1", "v1", "available")
-	r5 := newResource(model.TypeNetwork, "n1", "custom-net", "active")
+	r1 := newResource(model.TypeContainer, "c1", "app1", model.StateExited)
+	r2 := newResource(model.TypeContainer, "c2", "app2", model.StateExited)
+	r3 := newResource(model.TypeContainer, "c3", "app3", model.StateExited)
+	r4 := newResource(model.TypeVolume, "v1", "v1", model.StateAvailable)
+	r5 := newResource(model.TypeNetwork, "n1", "custom-net", model.StateActive)
 
-	mock.containers["c1"] = "exited"
-	mock.containers["c2"] = "exited"
-	mock.containers["c3"] = "exited"
+	mock.containers["c1"] = model.StateExited
+	mock.containers["c2"] = model.StateExited
+	mock.containers["c3"] = model.StateExited
 	mock.volumes["v1"] = true // volume uses Name, not ID (Name == "v1" here)
 	mock.networks["n1"] = true
 
@@ -375,14 +375,14 @@ func TestAdversarial_EmptyConfigDeletesNothing(t *testing.T) {
 
 	inv := &collector.Inventory{
 		Containers: []model.Resource{
-			{ID: "c1", Name: "app1", Type: model.TypeContainer, State: "exited", CreatedAt: old, Labels: map[string]string{}},
-			{ID: "c2", Name: "app2", Type: model.TypeContainer, State: "created", CreatedAt: old, Labels: map[string]string{}},
-			{ID: "c3", Name: "app3", Type: model.TypeContainer, State: "dead", CreatedAt: old, Labels: map[string]string{}},
+			{ID: "c1", Name: "app1", Type: model.TypeContainer, State: model.StateExited, CreatedAt: old, Labels: map[string]string{}},
+			{ID: "c2", Name: "app2", Type: model.TypeContainer, State: model.StateCreated, CreatedAt: old, Labels: map[string]string{}},
+			{ID: "c3", Name: "app3", Type: model.TypeContainer, State: model.StateDead, CreatedAt: old, Labels: map[string]string{}},
 		},
 		Images: []model.Resource{
-			{ID: "i1", Name: "<none>:<none>", Type: model.TypeImage, State: "dangling", CreatedAt: old, Labels: map[string]string{}},
-			{ID: "i2", Name: "old-base:v1", Type: model.TypeImage, State: "unused", CreatedAt: old, Labels: map[string]string{}},
-			{ID: "i3", Name: "nginx:old", Type: model.TypeImage, State: "unused", CreatedAt: old, Labels: map[string]string{}},
+			{ID: "i1", Name: "<none>:<none>", Type: model.TypeImage, State: model.StateDangling, CreatedAt: old, Labels: map[string]string{}},
+			{ID: "i2", Name: "old-base:v1", Type: model.TypeImage, State: model.StateUsed, CreatedAt: old, Labels: map[string]string{}},
+			{ID: "i3", Name: "nginx:old", Type: model.TypeImage, State: model.StateUsed, CreatedAt: old, Labels: map[string]string{}},
 		},
 		Volumes: []model.Resource{
 			{ID: "v1", Name: "orphan1", Type: model.TypeVolume, CreatedAt: old, Labels: map[string]string{}},
@@ -426,7 +426,7 @@ func TestAdversarial_ImageIDWithSHA256PrefixResolvedCorrectly(t *testing.T) {
 		ID:        "ctr-img-ref",
 		Name:      "app",
 		Type:      model.TypeContainer,
-		State:     "exited",
+		State: model.StateExited,
 		ImageID:   fullImageID,
 		Labels:    map[string]string{"dredge.keep": "true"},
 		CreatedAt: time.Now().Add(-48 * time.Hour),
@@ -435,7 +435,7 @@ func TestAdversarial_ImageIDWithSHA256PrefixResolvedCorrectly(t *testing.T) {
 		ID:        shortImageID,
 		Name:      "myapp:latest",
 		Type:      model.TypeImage,
-		State:     "dangling",
+		State: model.StateDangling,
 		CreatedAt: time.Now().Add(-200 * time.Hour),
 		Labels:    map[string]string{},
 	}
@@ -475,7 +475,7 @@ func TestAdversarial_VolumeMountedByContainerNotOrphaned(t *testing.T) {
 		ID:             "ctr-with-vol",
 		Name:           "app",
 		Type:           model.TypeContainer,
-		State:          "exited",
+		State: model.StateExited,
 		MountedVolumes: []string{"my-data"},
 		Labels:         map[string]string{},
 		CreatedAt:      time.Now().Add(-48 * time.Hour),
@@ -519,7 +519,7 @@ func TestAdversarial_NetworkConnectedToContainerNotUnused(t *testing.T) {
 		ID:                  "ctr-with-net",
 		Name:                "app",
 		Type:                model.TypeContainer,
-		State:               "exited",
+		State: model.StateExited,
 		ConnectedNetworkIDs: []string{"aabbccddeeff"},
 		Labels:              map[string]string{},
 		CreatedAt:           time.Now().Add(-48 * time.Hour),
@@ -585,8 +585,8 @@ protection:
 // a fresh context causes success — confirming that sweep must own its context.
 func TestSweepContextNotSharedWithCollection(t *testing.T) {
 	mock := newMockDockerSweeper()
-	r := newResource(model.TypeContainer, "ctr1", "app", "exited")
-	mock.containers["ctr1"] = "exited"
+	r := newResource(model.TypeContainer, "ctr1", "app", model.StateExited)
+	mock.containers["ctr1"] = model.StateExited
 
 	plan := buildPlan(r)
 	sw := sweeper.New(mock, adversarialLogger(), "dredge.keep=true")
@@ -601,7 +601,7 @@ func TestSweepContextNotSharedWithCollection(t *testing.T) {
 
 	// With a fresh context, the same plan succeeds — confirms sweep needs its own context.
 	mock2 := newMockDockerSweeper()
-	mock2.containers["ctr1"] = "exited"
+	mock2.containers["ctr1"] = model.StateExited
 	plan2 := buildPlan(r)
 	sw2 := sweeper.New(mock2, adversarialLogger(), "dredge.keep=true")
 
@@ -650,7 +650,7 @@ func TestAdversarial_ImageAtExactThresholdIsDeleted(t *testing.T) {
 		ID:         "img-boundary",
 		Name:       "old-image:v1",
 		Type:       model.TypeImage,
-		State:      "unused",
+		State: model.StateUsed,
 		CreatedAt:  createdAt,
 		References: nil,
 		Labels:     map[string]string{},
@@ -682,7 +682,7 @@ func TestAdversarial_MultipleContainersOneImageProtectedUntilAllDeleted(t *testi
 		ID:        "ctr-delete",
 		Name:      "app-old",
 		Type:      model.TypeContainer,
-		State:     "exited",
+		State: model.StateExited,
 		ImageID:   imgID,
 		Labels:    map[string]string{},
 		CreatedAt: time.Now().Add(-48 * time.Hour),
@@ -692,7 +692,7 @@ func TestAdversarial_MultipleContainersOneImageProtectedUntilAllDeleted(t *testi
 		ID:        "ctr-keep",
 		Name:      "app-protected",
 		Type:      model.TypeContainer,
-		State:     "exited",
+		State: model.StateExited,
 		ImageID:   imgID,
 		Labels:    map[string]string{"dredge.keep": "true"},
 		CreatedAt: time.Now().Add(-48 * time.Hour),
@@ -703,7 +703,7 @@ func TestAdversarial_MultipleContainersOneImageProtectedUntilAllDeleted(t *testi
 		ID:        imgID,
 		Name:      "<none>:<none>",
 		Type:      model.TypeImage,
-		State:     "dangling",
+		State: model.StateDangling,
 		Labels:    map[string]string{},
 		CreatedAt: time.Now().Add(-200 * time.Hour),
 	}

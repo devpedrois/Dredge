@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/user/dredge/internal/model"
@@ -43,27 +44,49 @@ func New(client DockerClient, logger *slog.Logger) *Collector {
 	return &Collector{client: client, logger: logger}
 }
 
-// CollectAll fetches all four resource types and returns a fully-resolved Inventory.
+// CollectAll fetches all four resource types concurrently and returns a fully-resolved Inventory.
+// All four Docker API calls are independent and issued in parallel to reduce collection latency.
 // References (image → containers) are resolved before returning.
 func (c *Collector) CollectAll(ctx context.Context) (*Inventory, error) {
-	containers, err := c.client.ListContainers(ctx)
-	if err != nil {
-		return nil, newCollectError("containers", err)
-	}
+	var (
+		containers, images, volumes, networks []model.Resource
+		errContainers, errImages, errVolumes, errNetworks error
+	)
 
-	images, err := c.client.ListImages(ctx)
-	if err != nil {
-		return nil, newCollectError("images", err)
-	}
+	var wg sync.WaitGroup
+	wg.Add(4)
 
-	volumes, err := c.client.ListVolumes(ctx)
-	if err != nil {
-		return nil, newCollectError("volumes", err)
-	}
+	go func() {
+		defer wg.Done()
+		var err error
+		containers, err = c.client.ListContainers(ctx)
+		errContainers = newCollectError("containers", err)
+	}()
+	go func() {
+		defer wg.Done()
+		var err error
+		images, err = c.client.ListImages(ctx)
+		errImages = newCollectError("images", err)
+	}()
+	go func() {
+		defer wg.Done()
+		var err error
+		volumes, err = c.client.ListVolumes(ctx)
+		errVolumes = newCollectError("volumes", err)
+	}()
+	go func() {
+		defer wg.Done()
+		var err error
+		networks, err = c.client.ListNetworks(ctx)
+		errNetworks = newCollectError("networks", err)
+	}()
 
-	networks, err := c.client.ListNetworks(ctx)
-	if err != nil {
-		return nil, newCollectError("networks", err)
+	wg.Wait()
+
+	for _, err := range []error{errContainers, errImages, errVolumes, errNetworks} {
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	inv := &Inventory{
@@ -87,6 +110,9 @@ func (c *Collector) CollectAll(ctx context.Context) (*Inventory, error) {
 }
 
 func newCollectError(resourceType string, err error) error {
+	if err == nil {
+		return nil
+	}
 	return fmt.Errorf("listing %s: %w", resourceType, err)
 }
 

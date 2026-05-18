@@ -16,8 +16,8 @@ import (
 
 // mockDockerSweeper implements sweeper.DockerClient for unit tests.
 type mockDockerSweeper struct {
-	// containers maps container ID → current state ("" = not found).
-	containers map[string]string
+	// containers maps container ID → current state (zero value = not found).
+	containers map[string]model.ResourceState
 	// images maps image ID → exists.
 	images map[string]bool
 	// volumes maps volume name → exists.
@@ -34,7 +34,7 @@ type mockDockerSweeper struct {
 
 func newMockDockerSweeper() *mockDockerSweeper {
 	return &mockDockerSweeper{
-		containers:   make(map[string]string),
+		containers:   make(map[string]model.ResourceState),
 		images:       make(map[string]bool),
 		volumes:      make(map[string]bool),
 		networks:     make(map[string]bool),
@@ -90,7 +90,7 @@ func (m *mockDockerSweeper) RemoveNetwork(ctx context.Context, id string) error 
 	return nil
 }
 
-func (m *mockDockerSweeper) InspectContainer(ctx context.Context, id string) (bool, string, error) {
+func (m *mockDockerSweeper) InspectContainer(ctx context.Context, id string) (bool, model.ResourceState, error) {
 	if ctx.Err() != nil {
 		return false, "", ctx.Err()
 	}
@@ -126,7 +126,7 @@ func newSweeperLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(new(bytes.Buffer), nil))
 }
 
-func newResource(rtype model.ResourceType, id, name, state string) *model.Resource {
+func newResource(rtype model.ResourceType, id, name string, state model.ResourceState) *model.Resource {
 	return &model.Resource{
 		ID:        id,
 		Name:      name,
@@ -151,10 +151,10 @@ func buildPlan(resources ...*model.Resource) *model.ExecutionPlan {
 func TestSweepDeletesResourcesInOrder(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	ctr := newResource(model.TypeContainer, "ctr1", "app", "exited")
-	img := newResource(model.TypeImage, "img1", "myimage:latest", "dangling")
+	ctr := newResource(model.TypeContainer, "ctr1", "app", model.StateExited)
+	img := newResource(model.TypeImage, "img1", "myimage:latest", model.StateDangling)
 
-	mock.containers["ctr1"] = "exited"
+	mock.containers["ctr1"] = model.StateExited
 	mock.images["img1"] = true
 
 	plan := buildPlan(ctr, img)
@@ -174,13 +174,13 @@ func TestSweepDeletesResourcesInOrder(t *testing.T) {
 func TestSweepFailForward(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	r1 := newResource(model.TypeContainer, "ctr1", "app1", "exited")
-	r2 := newResource(model.TypeContainer, "ctr2", "app2", "exited")
-	r3 := newResource(model.TypeVolume, "vol1", "vol1", "available")
-	r4 := newResource(model.TypeNetwork, "net1", "custom", "active")
+	r1 := newResource(model.TypeContainer, "ctr1", "app1", model.StateExited)
+	r2 := newResource(model.TypeContainer, "ctr2", "app2", model.StateExited)
+	r3 := newResource(model.TypeVolume, "vol1", "vol1", model.StateAvailable)
+	r4 := newResource(model.TypeNetwork, "net1", "custom", model.StateActive)
 
-	mock.containers["ctr1"] = "exited"
-	mock.containers["ctr2"] = "exited"
+	mock.containers["ctr1"] = model.StateExited
+	mock.containers["ctr2"] = model.StateExited
 	mock.volumes["vol1"] = true
 	mock.networks["net1"] = true
 
@@ -203,7 +203,7 @@ func TestSweepFailForward(t *testing.T) {
 func TestSweepSkipsVanishedResource(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	r := newResource(model.TypeContainer, "ctr1", "app", "exited")
+	r := newResource(model.TypeContainer, "ctr1", "app", model.StateExited)
 	// NOT added to mock.containers — simulates container gone between plan and sweep.
 
 	plan := buildPlan(r)
@@ -221,8 +221,8 @@ func TestSweepSkipsVanishedResource(t *testing.T) {
 func TestSweepSkipsContainerThatBecameRunning(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	r := newResource(model.TypeContainer, "ctr1", "app", "exited")
-	mock.containers["ctr1"] = "running" // state changed after plan was built
+	r := newResource(model.TypeContainer, "ctr1", "app", model.StateExited)
+	mock.containers["ctr1"] = model.StateRunning // state changed after plan was built
 
 	plan := buildPlan(r)
 	sw := sweeper.New(mock, newSweeperLogger(), "dredge.keep=true")
@@ -239,9 +239,9 @@ func TestSweepSkipsContainerThatBecameRunning(t *testing.T) {
 func TestSweepTripleChecksProtectionLabel(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	r := newResource(model.TypeContainer, "ctr1", "app", "exited")
+	r := newResource(model.TypeContainer, "ctr1", "app", model.StateExited)
 	r.Labels = map[string]string{"dredge.keep": "true"}
-	mock.containers["ctr1"] = "exited"
+	mock.containers["ctr1"] = model.StateExited
 
 	plan := buildPlan(r)
 	sw := sweeper.New(mock, newSweeperLogger(), "dredge.keep=true")
@@ -259,9 +259,9 @@ func TestSweepAuditLogsEveryDeletion(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	mock := newMockDockerSweeper()
-	r1 := newResource(model.TypeContainer, "ctr1", "app", "exited")
-	r2 := newResource(model.TypeImage, "img1", "old:latest", "dangling")
-	mock.containers["ctr1"] = "exited"
+	r1 := newResource(model.TypeContainer, "ctr1", "app", model.StateExited)
+	r2 := newResource(model.TypeImage, "img1", "old:latest", model.StateDangling)
+	mock.containers["ctr1"] = model.StateExited
 	mock.images["img1"] = true
 
 	plan := buildPlan(r1, r2)
@@ -280,14 +280,14 @@ func TestSweepAuditLogsEveryDeletion(t *testing.T) {
 func TestSweepResultCountsCorrect(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	r1 := newResource(model.TypeContainer, "c1", "app1", "exited")
-	r2 := newResource(model.TypeContainer, "c2", "app2", "exited")
-	r3 := newResource(model.TypeContainer, "c3", "app3", "exited")
-	r4 := newResource(model.TypeImage, "i1", "img:latest", "dangling")
+	r1 := newResource(model.TypeContainer, "c1", "app1", model.StateExited)
+	r2 := newResource(model.TypeContainer, "c2", "app2", model.StateExited)
+	r3 := newResource(model.TypeContainer, "c3", "app3", model.StateExited)
+	r4 := newResource(model.TypeImage, "i1", "img:latest", model.StateDangling)
 
-	mock.containers["c1"] = "exited"
-	mock.containers["c2"] = "exited"
-	mock.containers["c3"] = "exited"
+	mock.containers["c1"] = model.StateExited
+	mock.containers["c2"] = model.StateExited
+	mock.containers["c3"] = model.StateExited
 	mock.images["i1"] = true
 
 	mock.removeErrors["c3"] = errors.New("conflict")
@@ -307,7 +307,7 @@ func TestSweepSkipsEmptyIDResource(t *testing.T) {
 	mock := newMockDockerSweeper()
 
 	r := &model.Resource{
-		ID: "", Name: "mystery", Type: model.TypeContainer, State: "exited",
+		ID: "", Name: "mystery", Type: model.TypeContainer, State: model.StateExited,
 		CreatedAt: time.Now().Add(-48 * time.Hour),
 	}
 	plan := buildPlan(r)
@@ -325,7 +325,7 @@ func TestSweepSkipsEmptyNameVolume(t *testing.T) {
 	mock := newMockDockerSweeper()
 
 	r := &model.Resource{
-		ID: "", Name: "", Type: model.TypeVolume, State: "available",
+		ID: "", Name: "", Type: model.TypeVolume, State: model.StateAvailable,
 		CreatedAt: time.Now().Add(-48 * time.Hour),
 	}
 	plan := buildPlan(r)
@@ -342,7 +342,7 @@ func TestSweepSkipsEmptyNameVolume(t *testing.T) {
 func TestSweepVolumesUseNameNotID(t *testing.T) {
 	mock := newMockDockerSweeper()
 
-	vol := newResource(model.TypeVolume, "my-data-volume", "my-data-volume", "available")
+	vol := newResource(model.TypeVolume, "my-data-volume", "my-data-volume", model.StateAvailable)
 	mock.volumes["my-data-volume"] = true
 
 	plan := buildPlan(vol)

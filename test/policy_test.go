@@ -65,7 +65,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "running container always protected",
 			inventory: invContainers(model.Resource{
-				ID: "run1", Type: model.TypeContainer, State: "running",
+				ID: "run1", Type: model.TypeContainer, State: model.StateRunning,
 				CreatedAt: time.Now().Add(-48 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "run1",
@@ -75,7 +75,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "running container with keep label — hardcoded protection fires before label check",
 			inventory: invContainers(model.Resource{
-				ID: "run-lbl", Type: model.TypeContainer, State: "running",
+				ID: "run-lbl", Type: model.TypeContainer, State: model.StateRunning,
 				CreatedAt: time.Now().Add(-48 * time.Hour),
 				Labels:    map[string]string{"dredge.keep": "true"},
 			}),
@@ -86,7 +86,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "exited container older than threshold deleted",
 			inventory: invContainers(model.Resource{
-				ID: "exit-old", Type: model.TypeContainer, State: "exited",
+				ID: "exit-old", Type: model.TypeContainer, State: model.StateExited,
 				CreatedAt: time.Now().Add(-48 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "exit-old",
@@ -96,7 +96,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "exited container younger than threshold kept",
 			inventory: invContainers(model.Resource{
-				ID: "exit-new", Type: model.TypeContainer, State: "exited",
+				ID: "exit-new", Type: model.TypeContainer, State: model.StateExited,
 				CreatedAt: time.Now().Add(-2 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "exit-new",
@@ -106,7 +106,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "dead container deleted immediately (OlderThan 0)",
 			inventory: invContainers(model.Resource{
-				ID: "dead1", Type: model.TypeContainer, State: "dead",
+				ID: "dead1", Type: model.TypeContainer, State: model.StateDead,
 				CreatedAt: time.Now().Add(-1 * time.Minute), Labels: map[string]string{},
 			}),
 			resourceID:     "dead1",
@@ -116,7 +116,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "label protection overrides deletion rule",
 			inventory: invContainers(model.Resource{
-				ID: "lbl1", Type: model.TypeContainer, State: "exited",
+				ID: "lbl1", Type: model.TypeContainer, State: model.StateExited,
 				CreatedAt: time.Now().Add(-48 * time.Hour),
 				Labels:    map[string]string{"dredge.keep": "true"},
 			}),
@@ -127,7 +127,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "label with wrong value does not protect",
 			inventory: invContainers(model.Resource{
-				ID: "lbl2", Type: model.TypeContainer, State: "exited",
+				ID: "lbl2", Type: model.TypeContainer, State: model.StateExited,
 				CreatedAt: time.Now().Add(-48 * time.Hour),
 				Labels:    map[string]string{"dredge.keep": "false"},
 			}),
@@ -138,7 +138,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "name pattern protection overrides deletion rule",
 			inventory: invContainers(model.Resource{
-				ID: "pg1", Name: "postgres-main", Type: model.TypeContainer, State: "exited",
+				ID: "pg1", Name: "postgres-main", Type: model.TypeContainer, State: model.StateExited,
 				CreatedAt: time.Now().Add(-48 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "pg1",
@@ -149,7 +149,7 @@ func TestEngine_Evaluate(t *testing.T) {
 			name: "dangling image deleted",
 			inventory: invImages(model.Resource{
 				ID: "img-dangle", Name: "<none>:<none>", Type: model.TypeImage,
-				State: "dangling", Labels: map[string]string{},
+				State: model.StateDangling, Labels: map[string]string{},
 			}),
 			resourceID:     "img-dangle",
 			wantAction:     model.ActionDelete,
@@ -159,7 +159,7 @@ func TestEngine_Evaluate(t *testing.T) {
 			name: "non-dangling image kept by dangling-only rule (recent)",
 			inventory: invImages(model.Resource{
 				ID: "img-used", Name: "nginx:latest", Type: model.TypeImage,
-				State: "used", CreatedAt: time.Now().Add(-2 * time.Hour), Labels: map[string]string{},
+				State: model.StateUsed, CreatedAt: time.Now().Add(-2 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "img-used",
 			wantAction:     model.ActionKeep,
@@ -169,7 +169,7 @@ func TestEngine_Evaluate(t *testing.T) {
 			name: "non-dangling image deleted when older than unused threshold",
 			inventory: invImages(model.Resource{
 				ID: "img-old", Name: "old-base:v1", Type: model.TypeImage,
-				State: "used", CreatedAt: time.Now().Add(-200 * time.Hour), Labels: map[string]string{},
+				State: model.StateUsed, CreatedAt: time.Now().Add(-200 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "img-old",
 			wantAction:     model.ActionDelete,
@@ -228,7 +228,7 @@ func TestEngine_Evaluate(t *testing.T) {
 		{
 			name: "no matching rule means keep (created container, no created rule)",
 			inventory: invContainers(model.Resource{
-				ID: "ctr-created", Type: model.TypeContainer, State: "created",
+				ID: "ctr-created", Type: model.TypeContainer, State: model.StateCreated,
 				CreatedAt: time.Now().Add(-48 * time.Hour), Labels: map[string]string{},
 			}),
 			resourceID:     "ctr-created",
@@ -240,14 +240,14 @@ func TestEngine_Evaluate(t *testing.T) {
 			inventory: &collector.Inventory{
 				Containers: []model.Resource{
 					{
-						ID: "ctr-run", Type: model.TypeContainer, State: "running",
+						ID: "ctr-run", Type: model.TypeContainer, State: model.StateRunning,
 						CreatedAt: time.Now().Add(-72 * time.Hour), Labels: map[string]string{},
 					},
 				},
 				Images: []model.Resource{
 					{
 						ID: "img-ref", Name: "old-base:v2", Type: model.TypeImage,
-						State:      "dangling",
+						State: model.StateDangling,
 						CreatedAt:  time.Now().Add(-200 * time.Hour),
 						References: []string{"ctr-run"},
 						Labels:     map[string]string{},

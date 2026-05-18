@@ -63,7 +63,6 @@ type ProtectionConfig struct {
 // WatchConfig controls daemon scheduling.
 type WatchConfig struct {
 	Interval time.Duration `mapstructure:"interval"`
-	Cron     string        `mapstructure:"cron"`
 }
 
 // LoggingConfig controls log output.

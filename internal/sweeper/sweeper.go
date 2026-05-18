@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/user/dredge/internal/model"
@@ -19,7 +18,7 @@ type DockerClient interface {
 	RemoveNetwork(ctx context.Context, id string) error
 	// Inspect methods for TOCTOU re-check.
 	// [SECURITY] Re-verify before each deletion — Docker state can change between plan and sweep.
-	InspectContainer(ctx context.Context, id string) (exists bool, state string, err error)
+	InspectContainer(ctx context.Context, id string) (exists bool, state model.ResourceState, err error)
 	InspectImage(ctx context.Context, id string) (exists bool, err error)
 	InspectVolume(ctx context.Context, name string) (exists bool, err error)
 	InspectNetwork(ctx context.Context, id string) (exists bool, err error)
@@ -74,7 +73,7 @@ func (s *Sweeper) Execute(ctx context.Context, plan *model.ExecutionPlan) *model
 			continue
 		}
 		// [SECURITY] TOCTOU: container may have started between plan and sweep.
-		if r.Type == model.TypeContainer && currentState == "running" {
+		if r.Type == model.TypeContainer && currentState == model.StateRunning {
 			s.logger.Warn("[SECURITY] container changed to running — skipping",
 				"id", r.ID, "name", r.Name)
 			continue
@@ -82,7 +81,7 @@ func (s *Sweeper) Execute(ctx context.Context, plan *model.ExecutionPlan) *model
 
 		// [SECURITY] Triple-check protection label at sweeper level — safety net for policy engine bugs.
 		// Label is also checked in the policy engine and planner (three independent layers).
-		if s.hasProtectionLabel(r) {
+		if model.MatchesProtectionLabel(s.protectionLabel, r.Labels) {
 			s.logger.Error("[SECURITY] protected resource reached sweeper — BUG in policy engine, skipping",
 				"id", r.ID, "type", r.Type, "name", r.Name, "label", s.protectionLabel)
 			continue
@@ -120,7 +119,7 @@ func (s *Sweeper) Execute(ctx context.Context, plan *model.ExecutionPlan) *model
 // On inspect error, returns conservative exists=true with original state — better to attempt deletion and fail
 // than to silently skip a resource that might still exist.
 // [SECURITY] TOCTOU defense — detect containers that became running between plan and sweep.
-func (s *Sweeper) verifyResource(ctx context.Context, r *model.Resource) (exists bool, currentState string) {
+func (s *Sweeper) verifyResource(ctx context.Context, r *model.Resource) (exists bool, currentState model.ResourceState) {
 	switch r.Type {
 	case model.TypeContainer:
 		ok, state, err := s.client.InspectContainer(ctx, r.ID)
@@ -157,9 +156,14 @@ func (s *Sweeper) verifyResource(ctx context.Context, r *model.Resource) (exists
 			return true, r.State
 		}
 		return ok, r.State
-	}
 
-	return true, r.State
+	default:
+		// [SECURITY] Unknown resource type — skip deletion rather than proceeding blindly.
+		// This guards against new ResourceTypes being added without updating this switch.
+		s.logger.Error("[SECURITY] unknown resource type in verifyResource — skipping deletion",
+			"type", r.Type, "id", r.ID)
+		return false, ""
+	}
 }
 
 // deleteResource dispatches to the correct Docker removal call by resource type.
@@ -179,16 +183,3 @@ func (s *Sweeper) deleteResource(ctx context.Context, r *model.Resource) error {
 	}
 }
 
-// hasProtectionLabel checks whether the resource carries the configured protection label.
-// [SECURITY] Triple-check — safety net in case the policy engine or planner had a bug.
-func (s *Sweeper) hasProtectionLabel(r *model.Resource) bool {
-	if s.protectionLabel == "" || len(r.Labels) == 0 {
-		return false
-	}
-	parts := strings.SplitN(s.protectionLabel, "=", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	v, ok := r.Labels[parts[0]]
-	return ok && v == parts[1]
-}

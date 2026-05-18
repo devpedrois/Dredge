@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/user/dredge/internal/collector"
@@ -36,8 +35,6 @@ func runPlan(cmd *cobra.Command, _ []string) error {
 
 	p := planner.New(appCtx.Logger, appCtx.Config.Protection.Label)
 	plan := p.CreatePlan(decisions)
-
-	plan.Timestamp = time.Now()
 
 	format, _ := cmd.Flags().GetString("format")
 	if format == "" {

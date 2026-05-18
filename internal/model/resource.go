@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ResourceType identifies the kind of Docker resource.
 type ResourceType string
@@ -10,6 +13,32 @@ const (
 	TypeImage     ResourceType = "image"
 	TypeVolume    ResourceType = "volume"
 	TypeNetwork   ResourceType = "network"
+)
+
+// ResourceState is the normalized lifecycle state of a Docker resource.
+// Using a named type prevents silent mismatches from raw string comparisons
+// across Docker SDK version differences (e.g. "Exited" vs "exited").
+type ResourceState string
+
+const (
+	// Container states (from Docker daemon, normalized to lowercase).
+	StateRunning  ResourceState = "running"
+	StateExited   ResourceState = "exited"
+	StateCreated  ResourceState = "created"
+	StateDead     ResourceState = "dead"
+	StatePaused   ResourceState = "paused"
+	StateRestart  ResourceState = "restarting"
+	StateRemoving ResourceState = "removing"
+
+	// Image states.
+	StateDangling ResourceState = "dangling"
+	StateUsed     ResourceState = "used"
+
+	// Volume states.
+	StateAvailable ResourceState = "available"
+
+	// Network states.
+	StateActive ResourceState = "active"
 )
 
 // Resource is the normalized representation of any Docker resource.
@@ -22,8 +51,9 @@ type Resource struct {
 	Name string
 	// Type discriminates container/image/volume/network.
 	Type ResourceType
-	// State holds the Docker state string: running, exited, created, dead, dangling, etc.
-	State string
+	// State holds the normalized Docker lifecycle state.
+	// [SECURITY] Typed to prevent silent mismatches from raw string comparisons.
+	State ResourceState
 	// CreatedAt is when Docker created the resource.
 	CreatedAt time.Time
 	// Size in bytes. Zero if unknown (volumes, networks).
@@ -107,4 +137,21 @@ type SweepResult struct {
 type DeletionError struct {
 	Deletion Deletion
 	Error    string
+}
+
+// MatchesProtectionLabel reports whether labels contains the configured protection label.
+// label must be "key=value" (guaranteed by config validation). Returns false when either
+// argument is empty or the format is unexpected.
+// [SECURITY] Single implementation shared by all three defense-in-depth call sites
+// (policy engine, planner, sweeper) — parsing bug fixed in one place.
+func MatchesProtectionLabel(label string, labels map[string]string) bool {
+	if label == "" || len(labels) == 0 {
+		return false
+	}
+	parts := strings.SplitN(label, "=", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	v, ok := labels[parts[0]]
+	return ok && v == parts[1]
 }

@@ -49,7 +49,6 @@ func runSweep(cmd *cobra.Command, _ []string) error {
 
 	p := planner.New(appCtx.Logger, appCtx.Config.Protection.Label)
 	plan := p.CreatePlan(decisions)
-	plan.Timestamp = time.Now()
 
 	if len(plan.Deletions) == 0 {
 		fmt.Fprintln(os.Stdout, "Nothing to clean. Your Docker is tidy!")

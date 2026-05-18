@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/user/dredge/internal/config"
@@ -89,11 +88,3 @@ func init() {
 	rootCmd.AddCommand(statsCmd)
 }
 
-// exitOnError prints the error and exits with code 1.
-// Use this after defers have run — do NOT use log.Fatal.
-func exitOnError(err error) {
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-}
