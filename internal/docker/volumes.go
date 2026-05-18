@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/errdefs"
 	"github.com/user/dredge/internal/model"
 )
 
@@ -47,9 +48,26 @@ func normalizeVolume(vol *volume.Volume) model.Resource {
 }
 
 // RemoveVolume removes the volume with the given name.
-// [SECURITY] Implemented in PR #5 — sweeper layer adds TOCTOU re-check before calling.
+// [SECURITY] force=false — fails safely if the volume is still mounted by a container.
 func (c *Client) RemoveVolume(ctx context.Context, name string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.cli.VolumeRemove(ctx, name, false)
+}
+
+// InspectVolume returns whether the volume still exists.
+// Returns exists=false (no error) when the volume is not found.
+// [SECURITY] Used by sweeper for TOCTOU re-check before each deletion.
+func (c *Client) InspectVolume(ctx context.Context, name string) (exists bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	_, inspectErr := c.cli.VolumeInspect(ctx, name)
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspecting volume %s: %w", name, inspectErr)
+	}
+	return true, nil
 }

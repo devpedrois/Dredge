@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/errdefs"
 	"github.com/user/dredge/internal/model"
 )
 
@@ -54,9 +55,25 @@ func normalizeNetwork(net network.Summary) model.Resource {
 }
 
 // RemoveNetwork removes the network with the given ID.
-// [SECURITY] Implemented in PR #5 — sweeper layer adds TOCTOU re-check before calling.
 func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.cli.NetworkRemove(ctx, id)
+}
+
+// InspectNetwork returns whether the network still exists.
+// Returns exists=false (no error) when the network is not found.
+// [SECURITY] Used by sweeper for TOCTOU re-check before each deletion.
+func (c *Client) InspectNetwork(ctx context.Context, id string) (exists bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	_, inspectErr := c.cli.NetworkInspect(ctx, id, network.InspectOptions{})
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspecting network %s: %w", id, inspectErr)
+	}
+	return true, nil
 }
