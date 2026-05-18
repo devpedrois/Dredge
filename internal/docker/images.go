@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/errdefs"
 	"github.com/user/dredge/internal/model"
 )
 
@@ -64,10 +65,27 @@ func normalizeImage(img image.Summary) model.Resource {
 }
 
 // RemoveImage removes the image with the given ID.
-// [SECURITY] Implemented in PR #5 — sweeper layer adds TOCTOU re-check before calling.
+// [SECURITY] Force: false, PruneChildren: false — conservative; fails safely if image is still referenced.
 func (c *Client) RemoveImage(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	_, err := c.cli.ImageRemove(ctx, id, image.RemoveOptions{})
+	_, err := c.cli.ImageRemove(ctx, id, image.RemoveOptions{Force: false, PruneChildren: false})
 	return err
+}
+
+// InspectImage returns whether the image still exists.
+// Returns exists=false (no error) when the image is not found.
+// [SECURITY] Used by sweeper for TOCTOU re-check before each deletion.
+func (c *Client) InspectImage(ctx context.Context, id string) (exists bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	_, _, inspectErr := c.cli.ImageInspectWithRaw(ctx, id)
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspecting image %s: %w", id, inspectErr)
+	}
+	return true, nil
 }

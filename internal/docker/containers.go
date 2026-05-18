@@ -8,6 +8,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/user/dredge/internal/model"
 )
 
@@ -58,9 +59,26 @@ func normalizeContainer(ctr dockertypes.Container) model.Resource {
 }
 
 // RemoveContainer removes the container with the given ID.
-// [SECURITY] Implemented in PR #5 — sweeper layer adds TOCTOU re-check before calling.
+// [SECURITY] Force: false — never force-remove; if container restarted, the call fails safely.
 func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	return c.cli.ContainerRemove(ctx, id, container.RemoveOptions{})
+	return c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: false})
+}
+
+// InspectContainer returns the current existence and state of a container.
+// Returns exists=false (no error) when the container is not found.
+// [SECURITY] Used by sweeper for TOCTOU re-check before each deletion.
+func (c *Client) InspectContainer(ctx context.Context, id string) (exists bool, state string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	info, inspectErr := c.cli.ContainerInspect(ctx, id)
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("inspecting container %s: %w", id, inspectErr)
+	}
+	return true, info.State.Status, nil
 }
